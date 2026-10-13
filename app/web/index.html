@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NextBastion 堡垒机</title>
+<style>
+  :root{--bg:#f5f5f7;--card:#fff;--primary:#0b3d62;--primary-hover:#14548a;--primary-light:#e8f0f7;--text:#1d1d1f;--text-2:#6e6e73;--text-3:#86868b;--border:#e5e5ea;--green:#34c759;--red:#ff3b30;--orange:#ff9500;--serif:"Noto Serif SC","Songti SC",serif;--sans:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);font-family:var(--sans);color:var(--text);font-size:14px}
+  button{font-family:inherit;cursor:pointer}
+  #login-page{position:fixed;inset:0;z-index:100;background:linear-gradient(135deg,#0b3d62 0%,#14548a 55%,#1a6fb5 100%);display:flex;align-items:center;justify-content:center}
+  .login-card{background:#fff;border-radius:20px;padding:44px 40px;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .login-logo{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  .login-logo .mark{width:44px;height:44px;border-radius:12px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px}
+  .login-logo h1{font-family:var(--serif);font-size:22px}
+  .login-sub{font-size:12.5px;color:var(--text-3);margin-bottom:28px}
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:12.5px;color:var(--text-2);margin-bottom:6px;font-weight:500}
+  .field input{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none}
+  .field input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(11,61,98,.08)}
+  .btn-login{width:100%;padding:12px;background:var(--primary);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;margin-top:8px}
+  .btn-login:hover{background:var(--primary-hover)}
+  #app{display:none;min-height:100vh}
+  .layout{display:flex;min-height:100vh}
+  .sidebar{width:232px;background:#fff;border-right:1px solid var(--border);padding:20px 14px;flex:none;display:flex;flex-direction:column}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 20px}
+  .brand .mark{width:36px;height:36px;border-radius:10px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px}
+  .brand b{font-family:var(--serif);font-size:16.5px}
+  .nav-group{font-size:11px;color:var(--text-3);padding:14px 12px 6px;letter-spacing:1px}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;color:var(--text-2);cursor:pointer;font-size:13.5px;margin-bottom:2px}
+  .nav-item:hover{background:#f5f5f7;color:var(--text)}
+  .nav-item.active{background:var(--primary-light);color:var(--primary);font-weight:600}
+  .nav-item .ic{width:18px;text-align:center;font-size:15px}
+  .spacer{flex:1}
+  .side-user{display:flex;align-items:center;gap:10px;padding:12px 10px;border-top:1px solid var(--border);font-size:13px}
+  .avatar{width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+  .side-user .u b{display:block;font-size:13px}.side-user .u span{font-size:11px;color:var(--text-3)}
+  .btn-logout{margin-left:auto;border:none;background:none;color:var(--text-3);font-size:16px}
+  .main{flex:1;padding:24px 28px;min-width:0}
+  .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+  .page-head h2{font-family:var(--serif);font-size:22px}
+  .page-head .sub{font-size:12.5px;color:var(--text-3);margin-top:2px}
+  .card{background:var(--card);border-radius:16px;padding:22px 24px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .btn{padding:8px 16px;border-radius:10px;border:none;font-size:13px;font-weight:500}
+  .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-hover)}
+  .btn-ghost{background:#fff;color:var(--text-2);border:1px solid var(--border)}
+  .btn-danger{background:#fdecea;color:var(--red)}
+  .btn-sm{padding:4px 12px;font-size:12px;border-radius:8px}
+  .badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11.5px;font-weight:500}
+  .badge-green{background:#e8f5e9;color:#1b7a3d}.badge-red{background:#fdecea;color:#c0392b}
+  .badge-orange{background:#fff3e0;color:#b26a00}.badge-blue{background:var(--primary-light);color:var(--primary)}
+  .badge-purple{background:#f3e8ff;color:#722ed1}.badge-gray{background:#f0f1f3;color:#666}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:12px;color:var(--text-3);font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:10px 12px;border-bottom:1px solid #f2f2f7}
+  tbody tr:hover{background:#fafbfc}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .search-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .search-bar input,.search-bar select{padding:9px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;outline:none;background:#fff}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px}
+  .stat .label{font-size:12.5px;color:var(--text-3)}
+  .stat .value{font-family:var(--serif);font-size:32px;font-weight:700;margin:4px 0;color:var(--primary)}
+  .stat .value.alert{color:var(--red)}
+  .empty{text-align:center;color:var(--text-3);padding:40px 0;font-size:13px}
+  /* ===== 模态框 ===== */
+  .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:150;display:none;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px}
+  .modal-mask.show{display:flex}
+  .modal{background:#fff;border-radius:16px;width:520px;max-width:96vw;box-shadow:0 24px 80px rgba(0,0,0,.3);animation:pop .18s ease}
+  @keyframes pop{from{transform:translateY(-12px);opacity:0}}
+  .modal-head{padding:18px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+  .modal-head b{font-family:var(--serif);font-size:17px;color:var(--primary)}
+  .modal-x{border:none;background:none;font-size:18px;color:var(--text-3);cursor:pointer}
+  .modal-body{padding:20px 24px;display:grid;gap:14px}
+  .m-row{display:grid;grid-template-columns:110px 1fr;gap:12px;align-items:center}
+  .m-row>label{font-size:12.5px;color:var(--text-2);font-weight:500;text-align:right}
+  .m-row input,.m-row select{padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;outline:none;width:100%}
+  .m-row input:focus,.m-row select:focus{border-color:var(--primary)}
+  .m-row .hint{font-size:11px;color:var(--text-3)}
+  .m-check{display:flex;gap:16px;align-items:center;font-size:13px;flex-wrap:wrap}
+  .m-check label{display:flex;gap:6px;align-items:center;font-weight:400;color:var(--text);cursor:pointer}
+  .modal-foot{padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
+  .switch{position:relative;width:38px;height:22px;flex:none;cursor:pointer;display:inline-block}
+  .switch input{opacity:0;width:0;height:0}
+  .switch .sl{position:absolute;inset:0;background:#d1d1d6;border-radius:22px;transition:.2s}
+  .switch .sl::before{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.2s}
+  .switch input:checked + .sl{background:var(--green)}
+  .switch input:checked + .sl::before{transform:translateX(16px)}
+  .toast{position:fixed;top:20px;right:20px;z-index:200;background:#1d1d1f;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.25);display:none}
+  .rec-dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--red);font-weight:600}
+  .rec-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--red);animation:blink 1.2s infinite}
+  @keyframes blink{50%{opacity:.2}}
+
+/* 规则集编辑表格 */
+.rule-table{width:100%;border-collapse:collapse;font-size:12px}
+.rule-table th{color:#6c7086;font-weight:500;padding:4px 6px;text-align:left;border-bottom:1px solid #dfe2ea}
+.rule-table td{padding:4px 4px;border-bottom:1px solid #eceef3}
+.rule-table input,.rule-table select{width:100%;padding:6px 8px;border:1px solid #d5d9e2;border-radius:6px;background:#fff;font-size:12px;box-sizing:border-box;color:#1e2130}
+.rule-table input:focus,.rule-table select:focus{outline:none;border-color:#0b3d62;box-shadow:0 0 0 2px rgba(11,61,98,.12)}
+
+/* 资产协议筛选 chips */
+.proto-chips{display:flex;gap:6px}
+.chip{padding:6px 14px;border-radius:16px;border:1px solid #d5d9e2;background:#fff;color:#4b5568;font-size:12px;cursor:pointer;transition:all .15s}
+.chip:hover{border-color:#0b3d62}
+.chip.on{background:#0b3d62;color:#fff;border-color:#0b3d62;font-weight:600}
+.lbl{display:inline-block;padding:1px 8px;margin:1px 3px 1px 0;border-radius:9px;background:#eef1f6;color:#4b5568;font-size:11px;border:1px solid #dde2ec}
+</style>
+</head>
+<body>
+<div id="login-page">
+  <div class="login-card">
+    <div class="login-logo"><div class="mark">🛡️</div><h1>NextBastion</h1></div>
+    <div class="login-sub">轻量合规堡垒机 · V1.0 · <span id="ver-host"></span></div>
+    <div class="field"><label>用户名</label><input id="login-user" placeholder="admin"></div>
+    <div class="field"><label>密码</label><input id="login-pass" type="password" placeholder="初始密码见 README"></div>
+    <div class="field"><label>动态口令（TOTP）</label><input id="login-totp" placeholder="6 位动态码（如启用）"></div>
+    <div id="login-err" style="color:var(--red);font-size:12px;margin-bottom:8px;display:none"></div>
+    <button class="btn-login" onclick="doLogin()">登 录</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><div class="mark">🛡️</div><b>NextBastion</b></div>
+      <div class="nav-group">总览</div>
+      <div class="nav-item active" data-page="dashboard" data-roles="admin,auditor,user"><span class="ic">📊</span>仪表盘</div>
+      <div class="nav-group">运维接入</div>
+      <div class="nav-item" data-page="myassets" data-roles="admin,auditor,user"><span class="ic">🖥️</span>我的资产</div>
+      <div class="nav-group">管理</div>
+      <div class="nav-item" data-page="assets" data-roles="admin"><span class="ic">🗂️</span>资产管理</div>
+      <div class="nav-item" data-page="policies" data-roles="admin"><span class="ic">🔐</span>授权管理</div>
+      <div class="nav-item" data-page="users" data-roles="admin"><span class="ic">👥</span>用户管理</div>
+      <div class="nav-item" data-page="groups" data-roles="admin"><span class="ic">👨‍👩‍👧‍👦</span>用户组</div>
+      <div class="nav-item" data-page="filters" data-roles="admin"><span class="ic">🧯</span>高危规则</div>
+      <div class="nav-item" data-page="settings" data-roles="admin"><span class="ic">⚙️</span>系统设置</div>
+      <div class="nav-group">审计中心</div>
+      <div class="nav-item" data-page="active" data-roles="admin,auditor"><span class="ic">🟢</span>在线会话</div>
+      <div class="nav-item" data-page="sessions" data-roles="admin,auditor"><span class="ic">🎬</span>会话审计</div>
+      <div class="nav-item" data-page="commands" data-roles="admin,auditor"><span class="ic">📜</span>命令审计</div>
+      <div class="spacer"></div>
+      <div class="side-user"><div class="avatar" id="u-avatar">A</div>
+        <div class="u"><b id="u-name">-</b><span id="u-rolebar">-</span></div>
+        <button class="btn-logout" onclick="logout()">⏻</button></div>
+    </aside>
+    <main class="main" id="main"></main>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal-mask" id="modal-mask"><div class="modal" id="modal-box"></div></div>
+
+<script>
+// ===== 模态框基础 =====
+function openModal(html){document.getElementById('modal-box').innerHTML=html;document.getElementById('modal-mask').classList.add('show')}
+function closeModal(){document.getElementById('modal-mask').classList.remove('show')}
+document.getElementById('modal-mask').addEventListener('click',e=>{if(e.target.id==='modal-mask')closeModal()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+const mRow=(label,inner)=>`<div class="m-row"><label>${label}</label><div>${inner}</div></div>`;
+
+const API = '/api/v1';
+let TOKEN = sessionStorage.getItem('nb_token') || '';
+let USER = JSON.parse(sessionStorage.getItem('nb_user') || 'null');
+document.getElementById('ver-host').textContent = location.host;
+
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2500)}
+async function api(path, opts={}){
+  opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{}, TOKEN?{Authorization:'Bearer '+TOKEN}:{});
+  const r = await fetch(API+path, opts);
+  if(r.status===401 && path!=='/auth/login'){logout();throw new Error('未认证')}
+  const j = await r.json().catch(()=>({code:r.status,message:'HTTP '+r.status}));
+  if(r.status>=400) throw new Error(j.message||('HTTP '+r.status));
+  return j.data;
+}
+const badge=(t,c)=>`<span class="badge badge-${c}">${t}</span>`;
+const protoBadge=p=>p==='rdp'?badge('RDP','blue'):badge('SSH','green');
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+async function doLogin(){
+  const err=document.getElementById('login-err');err.style.display='none';
+  try{
+    const d=await api('/auth/login',{method:'POST',body:JSON.stringify({
+      username:document.getElementById('login-user').value.trim(),
+      password:document.getElementById('login-pass').value,
+      totp:document.getElementById('login-totp').value.trim()})});
+    if(d.need_totp_setup){
+      // F8：目录用户首登 TOTP 绑定引导
+      showTotpSetup(d);
+      return;
+    }
+    TOKEN=d.access_token;USER=d.user;
+    sessionStorage.setItem('nb_token',TOKEN);sessionStorage.setItem('nb_user',JSON.stringify(USER));
+    document.getElementById('login-page').style.display='none';
+    document.getElementById('app').style.display='block';
+    fillUserBar();go('dashboard');toast('欢迎 '+USER.username);
+  }catch(e){err.textContent='登录失败：'+e.message;err.style.display='block'}
+}
+function showTotpSetup(d){
+  const box=document.getElementById('login-err');
+  box.style.display='block';box.style.background='#f6ffed';box.style.borderColor='#b7eb8f';box.style.color='#389e0d';box.style.lineHeight='1.8';
+  box.innerHTML=`<b>🔐 首次登录，请绑定动态口令（TOTP）</b><br>
+    1. 打开 Google Authenticator / 微信小程序「身份验证器」<br>
+    2. 手动添加，密钥：<b class="mono" style="user-select:all;font-size:14px">${d.totp_secret}</b><br>
+    3. 或点击 <a href="${esc(d.otpauth_url)}" style="color:#389e0d">此链接</a> 自动导入<br>
+    4. 输入 6 位动态码完成登录（绑定后即刻生效）`;
+  document.getElementById('login-totp').focus();
+  document.getElementById('login-totp').placeholder='输入扫描后的 6 位动态码';
+}
+function fillUserBar(){
+  document.getElementById('u-name').textContent=USER.username;
+  document.getElementById('u-rolebar').textContent={admin:'系统管理员',auditor:'安全审计员',user:'运维用户'}[USER.role]||USER.role;
+  document.getElementById('u-avatar').textContent=USER.username[0].toUpperCase();
+  applyNavRoles();
+}
+function applyNavRoles(){
+  document.querySelectorAll('.nav-item[data-roles]').forEach(i=>{
+    const rs=i.dataset.roles.split(',');
+    i.style.display = rs.includes(USER&&USER.role)?'':'none';
+  });
+}
+const PAGE_ROLES={assets:['admin'],policies:['admin'],users:['admin'],groups:['admin'],filters:['admin'],settings:['admin'],active:['admin','auditor'],sessions:['admin','auditor'],commands:['admin','auditor']};
+function pageAllowed(p){const rs=PAGE_ROLES[p];return !rs||rs.includes(USER&&USER.role)}
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('login-page').style.display!=='none')doLogin()});
+function logout(){TOKEN='';USER=null;sessionStorage.clear();location.reload()}
+
+document.querySelectorAll('.nav-item').forEach(i=>i.onclick=()=>go(i.dataset.page));
+function go(page){
+  if(!pageAllowed(page)){toast('无权访问该页面');page='myassets'}
+  document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active',i.dataset.page===page));
+  (PAGES[page]||PAGES.dashboard)().then(html=>{document.getElementById('main').innerHTML=html;if(page==='settings'){if(typeof ldapLoad==='function')ldapLoad();if(typeof foRefresh==='function')foRefresh();const u=document.getElementById('sysinfo-url');if(u){u.innerHTML='<span class=\'mono\'>'+esc(location.host)+'</span> · <b>'+esc(location.protocol==='https:'?'HTTPS':'HTTP')+'</b>';}}});
+}
+
+function foChip(v,fk){
+  return '<span style="display:inline-block;padding:3px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;margin:2px 4px 2px 0;background:#fafbfc">'+esc(v)+
+    ' <b style="cursor:pointer;color:#e5484d;font-weight:600" data-fk="'+esc(fk)+'" data-val="'+esc(v)+'" onclick="foDel(this)">✕</b></span>';
+}
+function foRefresh(){
+  const d=(window.__fieldOptions)||{os_type:[],label:[]};
+  const box1=document.getElementById('fo-os-list');if(!box1)return;
+  const grpOrder=['Linux','Windows','网络设备','其他'];
+  const groups={};
+  (d.os_type||[]).forEach(x=>{(groups[x.group||'其他']=groups[x.group||'其他']||[]).push(x.value);});
+  const keys=Object.keys(groups).sort((a,b)=>{
+    const ia=grpOrder.indexOf(a),ib=grpOrder.indexOf(b);
+    return (ia<0?90:ia)-(ib<0?90:ib);
+  });
+  box1.innerHTML=keys.length?keys.map(g=>'<div style="margin-bottom:4px"><span style="font-size:11px;color:var(--text-3);margin-right:4px">'+esc(g)+' ·</span>'+
+    groups[g].map(v=>foChip(v,'os_type')).join('')+'</div>').join(''):'<div class="hint">暂无选项</div>';
+  const box2=document.getElementById('fo-label-list');
+  if(box2)box2.innerHTML=(d.label||[]).length?d.label.map(x=>foChip(x.value,'label')).join(''):'<div class="hint">暂无选项</div>';
+}
+async function foAdd(fk){
+  const valEl=document.getElementById(fk==='os_type'?'fo-os-val':'fo-label-val');
+  const val=valEl.value.trim();
+  if(!val)return toast('请输入选项值');
+  const grp=fk==='os_type'?((document.getElementById('fo-os-grp').value.trim())||'其他'):'';
+  try{
+    await api('/settings/field-options',{method:'POST',body:JSON.stringify({action:'add',field_key:fk,opt_value:val,opt_group:grp})});
+    toast('已添加：'+val);
+    valEl.value='';
+    if(fk==='os_type')document.getElementById('fo-os-grp').value='';
+    await loadFieldOptions(true);foRefresh();
+  }catch(e){toast('添加失败：'+e.message)}
+}
+async function foDel(el){
+  const fk=el.dataset.fk,val=el.dataset.val;
+  if(!confirm('删除选项「'+val+'」？已有资产的存值不受影响，仅从候选列表移除。'))return;
+  try{
+    await api('/settings/field-options',{method:'POST',body:JSON.stringify({action:'del',field_key:fk,opt_value:val})});
+    toast('已删除：'+val);
+    await loadFieldOptions(true);foRefresh();
+  }catch(e){toast('删除失败：'+e.message)}
+}
+
+function pgGo(kind,p){
+  if(kind==='sess')window.__sessPage=p;else window.__cmdPage=p;
+  go(kind==='sess'?'sessions':'commands');
+}
+function pgSize(kind,el){
+  const ps=parseInt(el.value,10)||20;
+  if(kind==='sess'){window.__sessSize=ps;window.__sessPage=1;}else{window.__cmdSize=ps;window.__cmdPage=1;}
+  go(kind==='sess'?'sessions':'commands');
+}
+function pagerHtml(kind,d){
+  const page=d.page||1,pages=d.pages||1,total=d.total||0;
+  const curSize=parseInt(d.page_size,10)||(kind==='sess'?window.__sessSize:window.__cmdSize)||20;
+  const sizeSel=`<select onchange="pgSize('${kind}',this)" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg-1,#fff);color:var(--text-1,#222)">`
+    +[20,50,100].map(s=>`<option value="${s}"${s===curSize?' selected':''}>${s} 条/页</option>`).join('')+`</select>`;
+  if(pages<=1)return `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap"><span class="hint" style="flex:1"></span><span class="hint">共 ${total} 条</span>${sizeSel}</div>`;
+  const btn=(p,t,cur,dis)=>`<button class="btn btn-sm ${cur?'btn-primary':'btn-ghost'}" ${dis?'disabled style="opacity:.4"':''} ${dis?'':`onclick="pgGo('${kind}',${p})"`}>${t}</button>`;
+  let start=Math.max(1,page-3),end=Math.min(pages,start+6);start=Math.max(1,end-6);
+  let nums='';
+  for(let p=start;p<=end;p++)nums+=btn(p,p,p===page,false);
+  return `<div style="display:flex;gap:6px;align-items:center;margin-top:12px;flex-wrap:wrap">
+    <span class="hint">共 ${total} 条 · 第 ${page}/${pages} 页</span>${sizeSel}<span style="flex:1"></span>
+    ${btn(1,'«',false,page<=1)}${btn(page-1,'‹',false,page<=1)}${nums}${btn(page+1,'›',false,page>=pages)}${btn(pages,'»',false,page>=pages)}
+  </div>`;
+}
+
+const PAGES={
+async dashboard(){
+  let s={};
+  try{s=await api('/dashboard/stats')}catch(e){}
+  return `<div class="page-head"><div><h2>仪表盘</h2><div class="sub">系统运行概览</div></div>
+    <button class="btn btn-ghost" onclick="loadPage()">刷新</button></div>
+  <div class="stat-grid">
+    <div class="card stat"><div class="label">纳管资产</div><div class="value">${s.assets??'-'}</div></div>
+    <div class="card stat"><div class="label">在线会话</div><div class="value">${s.online_sessions??'-'}</div></div>
+    <div class="card stat"><div class="label">今日命令</div><div class="value">${s.today_commands??'-'}</div></div>
+    <div class="card stat"><div class="label">今日高危</div><div class="value ${s.high_risk_alerts>0?'alert':''}">${s.high_risk_alerts??'-'}</div></div>
+  </div>`;
+},
+async myassets(){
+  const rows=await api('/my/assets');
+  const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
+    <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
+    <td>${protoBadge(a.protocol)}</td><td>${esc(a.node_name)}</td>
+    <td>${a.protocol==='rdp'
+      ?`<button class="btn btn-sm btn-ghost" onclick="rdpConnect(${a.id})">RDP</button>`
+      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id})">连 接</button>`}</td></tr>`).join('');
+  return `<div class="page-head"><div><h2>我的资产</h2><div class="sub">五维授权过滤后的可见资产</div></div></div>
+  <div class="card"><div class="search-bar" style="gap:10px;flex-wrap:wrap">
+      <input id="my-q" placeholder="🔍 搜索主机名 / IP / 系统 / 分组" style="flex:1;min-width:200px" oninput="myAssetsFilter()">
+      <div class="proto-chips" id="my-proto-chips">
+        <button class="chip on" data-p="" onclick="myAssetsProto(this)">全部</button>
+        <button class="chip" data-p="ssh" onclick="myAssetsProto(this)">SSH</button>
+        <button class="chip" data-p="rdp" onclick="myAssetsProto(this)">RDP</button>
+      </div>
+    </div>
+    <div class="hint" id="my-count" style="margin:6px 2px 0"></div>
+  <div id="my-assets-table">${rows.length?`<table><thead><tr><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>节点</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无授权资产</div>'}</div></div>`;
+  setTimeout(myAssetsFilter,0);
+},
+async assets(){
+  const [rows,nodes]=await Promise.all([api('/assets'),api('/nodes')]);
+  window.__nodes=nodes;
+  const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
+    <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
+    <td>${protoBadge(a.protocol)}</td><td class="mono">${a.protocol}:${a.protocol==='rdp'?a.rdp_port:a.ssh_port}</td>
+    <td>${a.account?`<span class="mono">${esc(a.account)}</span>${a.account_count>1?` <span class="badge badge-gray">+${a.account_count-1}</span>`:''}${badge('已托管','green')}`:badge('未托管','red')}</td>
+    <td>${esc(a.node_name)}</td>
+    <td>${a.status==='online'?badge('在线','green'):a.status==='offline'?badge('离线','red'):badge('未知','gray')}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-sm btn-ghost" onclick="probeAsset(${a.id},this)">探测</button>
+      ${USER.role==='admin'?`
+      <button class="btn btn-sm btn-ghost" onclick="assetForm(${a.id})">编辑</button>
+      <button class="btn btn-sm btn-danger" onclick="delAsset(${a.id},'${esc(a.hostname)}')">删除</button>`:'-'}
+    </td></tr>`).join('');
+  return `<div class="page-head"><div><h2>资产管理</h2><div class="sub">共 ${rows.length} 台 · 凭据加密托管</div></div>
+    ${USER.role==='admin'?`<div style="display:flex;gap:8px">
+    <button class="btn btn-ghost" onclick="importAssets()">📥 CSV 导入</button>
+    <button class="btn btn-primary" onclick="assetForm()">+ 新建资产</button></div>`:''}</div>
+  <div class="card"><div class="search-bar" style="gap:10px;flex-wrap:wrap">
+      <input id="a-q" placeholder="🔍 搜索主机名 / IP / 系统" style="flex:1;min-width:200px" oninput="assetsFilter()" onkeydown="if(event.key===\'Enter\')assetsFilter()">
+      <div class="proto-chips" id="a-proto-chips">
+        <button class="chip on" data-p="" onclick="assetsProto(this)">全部</button>
+        <button class="chip" data-p="ssh" onclick="assetsProto(this)">SSH</button>
+        <button class="chip" data-p="rdp" onclick="assetsProto(this)">RDP</button>
+      </div>
+    </div>
+    <div class="hint" id="a-count" style="margin:6px 2px 0"></div>
+  <div id="assets-table">${rows.length?`<table><thead><tr><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>端口</th><th>托管账号</th><th>节点</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无资产，点击右上角新建</div>'}</div></div>`;
+  setTimeout(assetsFilter,0);
+},
+async policies(){
+  if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
+  const rows=await api('/policies');
+  const tr=rows.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.user_or_group_type==='user'?'用户: ':'组: '}${esc(p.user_or_group_name)}</td>
+    <td>${p.asset_or_node_type==='asset'?'资产: ':'节点: '}${esc(p.asset_or_node_name)}</td><td class="mono">${esc(p.account_pattern)}</td>
+    <td>${p.valid_until?esc(String(p.valid_until).slice(0,16).replace('T',' ')):'长期'}</td>
+    <td>${p.is_enabled?badge('生效','green'):badge('停用','red')}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-sm btn-ghost" onclick="policyForm(${p.id})">编辑</button>
+      <button class="btn btn-sm btn-ghost" onclick="togglePolicy(${p.id},${p.is_enabled})">${p.is_enabled?'停用':'启用'}</button>
+      <button class="btn btn-sm btn-danger" onclick="delPolicy(${p.id},'${esc(p.name)}')">删除</button>
+    </td></tr>`).join('');
+  return `<div class="page-head"><div><h2>授权管理</h2><div class="sub">五维授权：用户/组 × 资产/节点 × 账号 × 时段 × 命令过滤</div></div>
+    <button class="btn btn-primary" onclick="policyForm()">+ 新建策略</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>策略名</th><th>授权对象</th><th>目标</th><th>账号</th><th>有效期至</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无策略，点击右上角新建</div>'}</div>`;
+},
+async users(){
+  if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
+  const rows=await api('/users');
+  window.__userRows=rows;
+  const tr=rows.map(u=>`<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.display_name||'-')}</td>
+    <td>${{admin:'管理员',auditor:'审计员',user:'用户'}[u.role]||u.role}</td>
+    <td>${u.auth_source==='ldap'?badge('目录','purple'):badge('本地','gray')}</td>
+    <td>${esc(u.group_names||'-')}</td>
+    <td>${u.is_mfa_enabled?badge('已启用','green'):badge('未启用','red')}</td>
+    <td>${u.is_active?badge('正常','green'):badge('禁用','red')}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-sm btn-ghost" onclick="userForm(${u.id})">编辑</button>
+      <button class="btn btn-sm btn-ghost" onclick="toggleUser(${u.id},${u.is_active})">${u.is_active?'禁用':'启用'}</button>
+      <button class="btn btn-sm btn-danger" onclick="delUser(${u.id},'${esc(u.username)}')">删除</button>
+    </td></tr>`).join('');
+  return `<div class="page-head"><div><h2>用户管理</h2><div class="sub">共 ${rows.length} 个用户 · 目录用户由 LDAP 同步，本地用户新建自动生成 TOTP</div></div>
+    <button class="btn btn-primary" onclick="userForm()">+ 新建用户</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>来源</th><th>用户组</th><th>TOTP</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户</div>'}</div>`;
+},
+async groups(){
+  if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
+  const rows=await api('/users/groups');
+  window.__groupRows=rows;
+  const tr=rows.map(g=>`<tr><td><b>${esc(g.name)}</b></td><td>${esc(g.description||'-')}</td>
+    <td>${g.member_count>0?badge(g.member_count+' 人','blue'):'-'}</td>
+    <td>${g.id===1?badge('系统内置','gray'):''}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-sm btn-ghost" onclick="groupForm(${g.id})">编辑</button>
+      <button class="btn btn-sm btn-ghost" onclick="viewGroupMembers(${g.id},'${esc(g.name)}')">成员</button>
+      ${g.id===1?'':`<button class="btn btn-sm btn-danger" onclick="delGroup(${g.id},'${esc(g.name)}')">删除</button>`}
+    </td></tr>`).join('');
+  return `<div class="page-head"><div><h2>用户组</h2><div class="sub">共 ${rows.length} 个组 · 授权策略可按组批量授权</div></div>
+    <button class="btn btn-primary" onclick="groupForm()">+ 新建用户组</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>组名</th><th>描述</th><th>成员数</th><th>备注</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户组</div>'}</div>`;
+},
+async filters(){
+  if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
+  const rows=await api('/filters');
+  window.__filterRows=rows;
+  const tr=rows.map(f=>{
+    let rules=[];try{rules=JSON.parse(f.rules)||[]}catch(e){}
+    return `<tr><td><b>${esc(f.name)}</b></td>
+    <td>${rules.map(r=>`<span class="badge ${r.action==='block'?'badge-red':r.action==='alert'?'badge-orange':'badge-green'}" style="margin:2px">${esc(r.action)}·${esc(r.name||r.regex)}</span>`).join(' ')}</td>
+    <td>${f.id===1?badge('默认','gray'):''}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-sm btn-ghost" onclick="filterForm(${f.id})">编辑</button>
+      ${f.id===1?'':`<button class="btn btn-sm btn-danger" onclick="delFilter(${f.id},'${esc(f.name)}')">删除</button>`}
+    </td></tr>`}).join('');
+  return `<div class="page-head"><div><h2>高危命令规则</h2><div class="sub">规则集 × 策略绑定实现差异化管控（授权管理中可为每条策略选规则集）</div></div>
+    <button class="btn btn-primary" onclick="filterForm()">+ 新建规则集</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>规则集</th><th>规则（动作·名称）</th><th>备注</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无规则集</div>'}</div>`;
+},
+async settings(){
+  if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
+  let wh={urls:[]};
+  try{wh=await api('/settings/webhook')}catch(e){}
+  let fo={os_type:[],label:[]};
+  try{fo=await api('/assets/field-options');window.__fieldOptions=fo;}catch(e){}
+  return `<div class="page-head"><div><h2>系统设置</h2><div class="sub">告警通道 · 目录认证 · 系统信息</div></div></div>
+  <div class="card" style="margin-bottom:16px">
+    <div style="font-weight:600;margin-bottom:4px">🗂 资产字段选项（数据库字典）</div>
+    <div style="font-size:12px;color:var(--text-3);margin-bottom:6px">资产表单的选项存于数据库 field_options 表，在此维护即时生效（增删无需改代码重启）。</div>
+    <div style="font-weight:600;margin:10px 0 6px;font-size:13px">💻 操作系统选项</div>
+    <div id="fo-os-list"></div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <input id="fo-os-val" placeholder="系统名称，如 Ubuntu 25.04" style="flex:1;min-width:170px">
+      <input id="fo-os-grp" list="fo-grp-list" placeholder="分组" style="width:130px">
+      <datalist id="fo-grp-list"><option value="Linux"><option value="Windows"><option value="网络设备"><option value="其他"></datalist>
+      <button class="btn btn-primary" onclick="foAdd('os_type')">➕ 添加</button>
+    </div>
+    <div style="font-weight:600;margin:14px 0 6px;font-size:13px">🏷 分组（labels）选项</div>
+    <div id="fo-label-list"></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input id="fo-label-val" placeholder="分组名称，如 灾备" style="flex:1;min-width:170px">
+      <button class="btn btn-primary" onclick="foAdd('label')">➕ 添加</button>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div style="font-weight:600;margin-bottom:10px">🔔 高危命令告警 Webhook</div>
+    <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">高危命令（阻断/告警）实时推送到以下地址，每行一个 URL。兼容钉钉/企微机器人（msgtype=text 格式）。</div>
+    <textarea id="wh-urls" rows="3" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px" placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx">${esc((wh.urls||[]).join('\n'))}</textarea>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="saveWebhook()">保存配置</button>
+      <button class="btn btn-ghost" id="wh-test-btn" onclick="testWebhook()">📡 发送测试</button>
+    </div>
+    <div id="wh-test-result" style="margin-top:10px"></div>
+  </div>
+
+  <!-- ================= LDAP 目录认证（Demo · PRD v0.1） ================= -->
+  <div class="card" style="margin-bottom:16px" id="ldap-card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div style="font-weight:600">🗂️ 目录认证（OpenLDAP）</div>
+      <span style="font-size:11px;color:var(--text-3)">目录账号直接登录 · 组映射自动授权 · 详见 PRD-LDAP对接.md</span>
+    </div>
+    <div style="font-size:12px;color:var(--text-3);margin-bottom:14px">运维账号直接用目录账号登录；目录组自动映射角色与用户组（入组即授权，移组即失权）。详见 PRD-LDAP对接.md</div>
+
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg);border-radius:10px;margin-bottom:14px">
+      <span style="font-size:12.5px;font-weight:600">启用目录认证</span>
+      <label class="switch"><input type="checkbox" id="ldap-enabled" onchange="ldapToggle()"><span class="sl"></span></label>
+      <span id="ldap-state" style="font-size:11.5px;color:var(--text-3)">当前：未启用</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost" onclick="ldapTest()" id="ldap-test-btn">⚡ 测试连接</button>
+      <button class="btn btn-ghost" onclick="ldapSync()">🔄 立即全量同步</button>
+    </div>
+
+    <div id="ldap-form" style="display:none">
+      <div style="font-size:12px;font-weight:600;color:var(--primary);margin:6px 0 8px">① 连接配置</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-bottom:14px">
+        <label style="font-size:12px;color:var(--text-2)">LDAP URL<div style="font-size:10.5px;color:var(--text-3)">ldaps:// 636 强制加密；ldap:// 389 需勾选 StartTLS</div>
+          <input id="ldap-url" value="ldaps://ldap.example.com:636" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+        <label style="font-size:12px;color:var(--text-2)">Base DN
+          <input id="ldap-basedn" value="dc=example,dc=com" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+        <label style="font-size:12px;color:var(--text-2)">Bind DN（只读服务账号）
+          <input id="ldap-binddn" value="cn=readonly,dc=example,dc=com" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+        <label style="font-size:12px;color:var(--text-2)">Bind 密码<div style="font-size:10.5px;color:var(--text-3)">AES-256-GCM 加密存储，永不回显</div>
+          <input id="ldap-bindpw" type="password" placeholder="••••••••" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+      </div>
+      <div style="display:flex;gap:18px;align-items:center;font-size:12px;color:var(--text-2);margin-bottom:14px;flex-wrap:wrap">
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="ldap-starttls"> StartTLS（389 升级加密）</label>
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="ldap-insecure"> 内网自签证书跳过校验<div style="font-size:10.5px;color:var(--red)">（默认校验 CA，慎开）</div></label>
+      </div>
+
+      <div style="font-size:12px;font-weight:600;color:var(--primary);margin:6px 0 8px">② 用户属性</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px 14px;margin-bottom:14px">
+        <label style="font-size:12px;color:var(--text-2)">登录名属性<div style="font-size:10.5px;color:var(--text-3)">OpenLDAP: uid · AD: sAMAccountName</div>
+          <input id="ldap-loginattr" value="uid" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+        <label style="font-size:12px;color:var(--text-2)">显示名属性
+          <input id="ldap-nameattr" value="cn" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+        <label style="font-size:12px;color:var(--text-2)">邮箱属性
+          <input id="ldap-mailattr" value="mail" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+        <label style="font-size:12px;color:var(--text-2)">User Filter
+          <input id="ldap-userfilter" value="(objectClass=inetOrgPerson)" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+      </div>
+
+      <div style="font-size:12px;font-weight:600;color:var(--primary);margin:6px 0 8px">③ 角色映射<div style="font-size:10.5px;color:var(--text-3);font-weight:400">命中即授予角色（admin > auditor 优先）；均未命中 → 默认 user</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-bottom:14px">
+        <label style="font-size:12px;color:var(--text-2)">→ 系统管理员
+          <input id="ldap-map-admin" value="cn=bastion-admins,ou=groups,dc=example,dc=com" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+        <label style="font-size:12px;color:var(--text-2)">→ 安全审计员
+          <input id="ldap-map-auditor" value="cn=bastion-auditors,ou=groups,dc=example,dc=com" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
+      </div>
+
+      <div style="font-size:12px;font-weight:600;color:var(--primary);margin:6px 0 8px">④ 用户组映射<div style="font-size:10.5px;color:var(--text-3);font-weight:400">目录组 → 本地用户组，组成员自动继承该组全部授权策略</div></div>
+      <div id="ldap-groupmap" style="display:grid;gap:8px;margin-bottom:14px"></div>
+      <button class="btn btn-ghost" style="font-size:12px" onclick="ldapAddMap()">+ 添加组映射</button>
+
+      <div style="display:flex;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="ldapSave()">保存目录配置</button>
+        <button class="btn btn-ghost" onclick="ldapReset()">重置</button>
+        <span style="flex:1"></span>
+        <span style="font-size:11px;color:var(--text-3);align-self:center">同步策略：登录实时 + 每日 03:40 全量（离职用户标记 suspended）</span>
+      </div>
+      <div id="ldap-result" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:10px">ℹ️ 系统信息</div>
+    <table><tbody>
+    <tr><td style="color:var(--text-3)">访问地址</td><td id="sysinfo-url"></td></tr>
+    <tr><td style="color:var(--text-3)">服务端</td><td>Rocky Linux 9.6 · Python 3.11 · MySQL 8 · guacd 1.5.5</td></tr>
+    <tr><td style="color:var(--text-3)">版本</td><td>NextBastion V1.2 · 122 项回归全绿 · LDAP 目录认证</td></tr>
+    </tbody></table>
+  </div>`;
+},
+async active(){
+  if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
+  const rows=await api('/sessions/active');
+  const tr=rows.map(s=>`<tr><td class="mono">${esc(s.id)}</td><td><b>${esc(s.username)}</b></td><td>${esc(s.hostname)}</td>
+    <td>${protoBadge(s.protocol)}</td><td class="mono">${esc(s.client_ip)}</td><td>${esc(s.started_at)}</td>
+    <td style="white-space:nowrap">
+      ${s.protocol==='ssh'?`<button class="btn btn-sm btn-ghost" onclick="watchSession('${s.id}')">👀 监视</button>`:''}
+      <button class="btn btn-sm btn-danger" onclick="killSess('${s.id}')">断开</button></td></tr>`).join('');
+  return `<div class="page-head"><div><h2>在线会话</h2><div class="sub">实时会话 · SSH 可实时监视画面</div></div><span class="rec-dot">LIVE</span>
+    <button class="btn btn-ghost" onclick="loadPage()">刷新</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>会话 ID</th><th>用户</th><th>资产</th><th>协议</th><th>来源</th><th>开始时间</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">当前无在线会话</div>'}</div>`;
+},
+async sessions(){
+  if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
+  const page=window.__sessPage||1;
+  let d={rows:[],total:0,page:1,pages:1};
+  try{d=await api('/sessions?page='+page+'&page_size='+(window.__sessSize||20));}catch(e){}
+  const rows=d.rows||[];
+  const tr=rows.map(s=>`<tr><td class="mono">${esc(s.id)}</td><td><b>${esc(s.username)}</b></td><td>${esc(s.hostname)}</td>
+    <td>${protoBadge(s.protocol)}</td><td>${esc(s.started_at)}</td><td>${s.duration_s}s</td>
+    <td>${s.cmd_count>0?s.cmd_count:'-'}</td>
+    <td>${s.is_high_risk?badge('高危','red'):badge('正常','green')}</td>
+    <td><button class="btn btn-sm btn-ghost" onclick="viewCast('${s.id}','${s.protocol}')">录像</button></td></tr>`).join('');
+  return `<div class="page-head"><div><h2>会话审计</h2><div class="sub">历史会话（SSH=cast 录像 · RDP=图形录像）</div></div>
+    <button class="btn btn-ghost" onclick="location.href=API+'/export/sessions'">📥 导出 CSV</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>会话 ID</th><th>用户</th><th>资产</th><th>协议</th><th>开始</th><th>时长</th><th>命令数</th><th>风险</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无历史会话</div>'}${pagerHtml('sess',d)}</div>`;
+},
+async commands(){
+  if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
+  const page=window.__cmdPage||1;
+  let d={rows:[],total:0,page:1,pages:1};
+  try{d=await api('/commands?page='+page+'&page_size='+(window.__cmdSize||20));}catch(e){}
+  let rows=d.rows||[];
+  const tr=rows.map(c=>{const a=c.action==='allow'?badge('放行','green'):c.action==='alert'?badge('告警','orange'):badge('阻断','red');
+    return `<tr><td class="mono">${esc(c.executed_at)}</td><td><b>${esc(c.username)}</b></td><td>${esc(c.hostname)}</td>
+    <td class="mono">${esc(c.command_text).slice(0,60)}</td><td>${esc(c.matched_rule)}</td><td>${a}</td></tr>`}).join('');
+  return `<div class="page-head"><div><h2>命令审计</h2><div class="sub">命令日志（SSH 会话）</div></div>
+    <button class="btn btn-ghost" onclick="location.href=API+'/export/commands'">📥 导出 CSV</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>时间</th><th>用户</th><th>资产</th><th>命令</th><th>规则</th><th>动作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无命令记录</div>'}${pagerHtml('cmd',d)}</div>`;
+}
+};
+
+// 资产筛选：本地即时过滤（搜索 主机名/IP/系统 × 协议 chip）
+window.__assetsProto='';
+function assetsProto(btn){
+  document.querySelectorAll('#a-proto-chips .chip').forEach(c=>c.classList.remove('on'));
+  btn.classList.add('on');
+  window.__assetsProto=btn.dataset.p;
+  assetsFilter();
+}
+function filterAssetsTable(tableSel,inputSel,cntSel,protoVar){
+  const q=(document.getElementById(inputSel)?.value||'').trim().toLowerCase();
+  const proto=window[protoVar];
+  const rows=[...document.querySelectorAll(tableSel+' tbody tr')];
+  let shown=0;
+  rows.forEach(tr=>{
+    const okQ=!q||(tr.dataset.search||'').includes(q);
+    const okP=!proto||tr.dataset.proto===proto;
+    const show=okQ&&okP;
+    tr.style.display=show?'':'none';
+    if(show)shown++;
+  });
+  const total=rows.length;
+  const cnt=document.getElementById(cntSel);
+  if(cnt)cnt.textContent=total?(shown+' / '+total+' 台'):'';
+}
+function assetsFilter(){ filterAssetsTable('#assets-table','a-q','a-count','__assetsProto'); }
+function myAssetsFilter(){ filterAssetsTable('#my-assets-table','my-q','my-count','__myAssetsProto'); }
+window.__myAssetsProto='';
+function myAssetsProto(btn){
+  document.querySelectorAll('#my-proto-chips .chip').forEach(c=>c.classList.remove('on'));
+  btn.classList.add('on');
+  window.__myAssetsProto=btn.dataset.p;
+  myAssetsFilter();
+}
+async function loadAssetsQ(){const q=document.getElementById('a-q').value;
+  const rows=await api('/assets'+(q?'?q='+encodeURIComponent(q):''));
+  const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
+    <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
+    <td>${protoBadge(a.protocol)}</td><td class="mono">${a.protocol}:${a.protocol==='rdp'?a.rdp_port:a.ssh_port}</td><td>${esc(a.node_name)}</td>
+    <td style="white-space:nowrap">
+      ${USER.role==='admin'?`
+      <button class="btn btn-sm btn-ghost" onclick="assetForm(${a.id})">编辑</button>
+      <button class="btn btn-sm btn-danger" onclick="delAsset(${a.id},'${esc(a.hostname)}')">删除</button>`:'-'}
+    </td></tr>`).join('');
+  document.getElementById('assets-table').innerHTML=tr?`<table><thead><tr><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>端口</th><th>节点</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无匹配</div>';
+  assetsFilter();}
+function loadPage(){go(document.querySelector('.nav-item.active').dataset.page)}
+
+// ============ 资产表单（新建/编辑） ============
+const OS_FALLBACK=[
+ {value:'CentOS 7',group:'Linux'},{value:'CentOS 8',group:'Linux'},{value:'Rocky Linux 8',group:'Linux'},{value:'Rocky Linux 9',group:'Linux'},
+ {value:'Ubuntu 20.04',group:'Linux'},{value:'Ubuntu 22.04',group:'Linux'},{value:'Ubuntu 24.04',group:'Linux'},{value:'Debian 11',group:'Linux'},
+ {value:'Debian 12',group:'Linux'},{value:'AlmaLinux 9',group:'Linux'},{value:'openEuler 22.03',group:'Linux'},{value:'Anolis OS 8',group:'Linux'},
+ {value:'Windows Server 2016',group:'Windows'},{value:'Windows Server 2019',group:'Windows'},{value:'Windows Server 2022',group:'Windows'},
+ {value:'Windows 10',group:'Windows'},{value:'Windows 11',group:'Windows'},
+ {value:'Huawei VRP',group:'网络设备'},{value:'H3C Comware',group:'网络设备'},{value:'Cisco IOS',group:'网络设备'}];
+async function loadFieldOptions(force){
+  if(window.__fieldOptions&&!force)return window.__fieldOptions;
+  try{window.__fieldOptions=await api('/assets/field-options');}catch(e){window.__fieldOptions=null;}
+  return window.__fieldOptions;
+}
+function osSelectHtml(cur){
+  const d=window.__fieldOptions;
+  const items=(d&&d.os_type&&d.os_type.length)?d.os_type:OS_FALLBACK;
+  const groups={};
+  items.forEach(x=>{(groups[x.group||'其他']=groups[x.group||'其他']||[]).push(x.value);});
+  let h='<select id="m-os" onchange="osOtherToggle()"><option value="">-- 选择系统 --</option>';
+  for(const g in groups){
+    h+='<optgroup label="'+esc(g)+'">';
+    groups[g].forEach(v=>{h+='<option value="'+esc(v)+'"'+(v===cur?' selected':'')+'>'+esc(v)+'</option>';});
+    h+='</optgroup>';
+  }
+  h+='<optgroup label="其他"><option value="__other__">✏️ 其他（手动输入）</option></optgroup></select>';
+  h+='<input id="m-os-other" placeholder="输入操作系统版本" style="display:none;margin-top:6px">';
+  return h;
+}
+async function assetForm(id){
+  const nodes=window.__nodes||await api('/nodes');
+  await loadFieldOptions();
+  try{const all=await api('/assets');
+    const dbLabels=((window.__fieldOptions||{}).label||[]).map(x=>x.value);
+    window.__allLabels=[...new Set([...all.flatMap(x=>parseLabels(x.labels)),...dbLabels])];}catch(e){}
+  const nodeOpts=nodes.map(n=>`<option value="${n.id}">${esc(n.name)}</option>`).join('');
+  let a={hostname:'',ip:'',os_type:'Linux',protocol:'ssh',ssh_port:22,rdp_port:3389,node_id:nodes[0]?.id||1,account:'root',labels_arr:[]};
+  let title='新建资产';
+  if(id){
+    const rows=await api('/assets');a=rows.find(x=>x.id===id)||a;a.labels_arr=parseLabels(a.labels);title='编辑资产 · '+a.hostname;
+  }
+  openModal(`
+  <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    ${mRow('主机名 *','<input id="m-hostname" value="'+esc(a.hostname)+'" placeholder="如 web-nginx-01">')}
+    ${mRow('IP *','<input id="m-ip" value="'+esc(a.ip)+'" placeholder="172.18.x.x">')}
+    ${mRow('协议','<select id="m-proto" onchange="protoSwitch()"><option value="ssh" '+(a.protocol!=='rdp'?'selected':'')+'>SSH (Linux)</option><option value="rdp" '+(a.protocol==='rdp'?'selected':'')+'>RDP (Windows)</option></select>')}
+    ${mRow('操作系统',osSelectHtml(a.os_type))}
+    ${mRow('分组','<input id="m-labels" value="'+esc((a.labels_arr||[]).join(', '))+'" list="m-labels-list" placeholder="如: 生产, 数据库（逗号分隔可多选）"><datalist id="m-labels-list">'+(window.__allLabels||[]).map(l=>'<option value="'+esc(l)+'">').join('')+'</datalist><div class="hint">用于分类与搜索，多个分组用逗号分隔</div>')}
+    ${mRow('SSH 端口','<input id="m-sshport" type="number" value="'+a.ssh_port+'">')}
+    ${mRow('RDP 端口','<input id="m-rdpport" type="number" value="'+a.rdp_port+'">')}
+    ${mRow('所属节点','<select id="m-node">'+nodeOpts+'</select>')}
+    ${mRow('托管账号','<input id="m-account" value="'+esc(a.account||'root')+'" placeholder="root / administrator"><div class="hint">'+(id?(a.account?`已托管账号：<b class="mono">${esc(a.account)}</b>（凭据加密存储，不可查看）`:'⚠ 尚未托管账号，填入账号密码后将自动创建'):'凭据由堡垒机加密托管，运维全程不可见')+'</div>')}
+    ${mRow('账号密码',`<input id="m-password" type="password" placeholder="${id?(a.account?'留空则不修改':'设置初始密码'):'初始密码'}">`)}
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="saveAsset(${id||0})">${id?'保存修改':'创 建'}</button>
+  </div>`);
+  document.getElementById('m-node').value=a.node_id;
+  // 系统下拉回显：已知值选中，未知值落"其他"并填入输入框
+  const osSel=document.getElementById('m-os');
+  const osOther=document.getElementById('m-os-other');
+  const knownOs=[...osSel.options].some(o=>o.value===a.os_type);
+  if(knownOs){osSel.value=a.os_type||'';}
+  else if(a.os_type){osSel.value='__other__';osOther.style.display='';osOther.value=a.os_type;}
+  osOtherToggle();
+  protoSwitch();
+}
+function osOtherToggle(){
+  const sel=document.getElementById('m-os');
+  const other=document.getElementById('m-os-other');
+  if(!sel||!other)return;
+  other.style.display=sel.value==='__other__'?'':'none';
+}
+function protoSwitch(){
+  const p=document.getElementById('m-proto').value;
+  document.getElementById('m-sshport').parentElement.style.display=p==='rdp'?'none':'';
+  document.getElementById('m-rdpport').parentElement.style.display=p==='ssh'?'none':'';
+  if(p==='rdp'&&!document.getElementById('m-account').value||document.getElementById('m-account').value==='root')document.getElementById('m-account').value='administrator';
+  if(p==='ssh'&&document.getElementById('m-account').value==='administrator')document.getElementById('m-account').value='root';
+}
+function parseLabels(s){
+  if(!s)return[];
+  try{const arr=JSON.parse(s);return Array.isArray(arr)?arr.map(x=>String(x).trim()).filter(Boolean):[]}
+  catch(e){return String(s).split(',').map(x=>x.trim()).filter(Boolean)}
+}
+async function saveAsset(id){
+  const body={
+    hostname:document.getElementById('m-hostname').value.trim(),
+    ip:document.getElementById('m-ip').value.trim(),
+    protocol:document.getElementById('m-proto').value,
+    os_type:(document.getElementById('m-os').value==='__other__'
+      ?(document.getElementById('m-os-other').value.trim()||'Linux')
+      :(document.getElementById('m-os').value||'Linux')),
+    ssh_port:+document.getElementById('m-sshport').value||22,
+    rdp_port:+document.getElementById('m-rdpport').value||3389,
+    node_id:+document.getElementById('m-node').value,
+    labels:document.getElementById('m-labels')?.value||'',
+    account:document.getElementById('m-account').value.trim(),
+    password:document.getElementById('m-password').value||undefined
+  };
+  if(!body.hostname||!body.ip){toast('主机名与 IP 必填');return}
+  try{
+    await api('/assets'+(id?('/'+id):''),{method:id?'PUT':'POST',body:JSON.stringify(body)});
+    toast(id?'资产已更新':'资产已创建');closeModal();loadPage();
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function delAsset(id,name){
+  if(!confirm(`确认删除资产「${name}」？\n其托管账号与历史授权将一并移除（审计日志保留）。`))return;
+  try{await api('/assets/'+id,{method:'DELETE'});toast('已删除：'+name);loadPage()}
+  catch(e){toast('删除失败：'+e.message)}
+}
+
+// ============ 策略表单（新建/编辑） ============
+async function policyForm(id){
+  const [users,groups,assets,nodes,filters]=await Promise.all([
+    api('/users'),api('/users/groups'),api('/assets'),api('/nodes'),api('/filters')]);
+  window.__policyCtx={users,groups,assets,nodes,filters};
+  let p={name:'',user_type:'group',user_id:groups[0]?.id,asset_type:'node',asset_id:nodes[1]?.id||nodes[0]?.id,
+         account_pattern:'*',command_filter_id:filters[0]?.id||1,valid_until:'',rdp:{clipboard:false,drive:false,watermark:true}};
+  let title='新建授权策略';
+  if(id){
+    const rows=await api('/policies');const old=rows.find(x=>x.id===id);
+    if(old){p={...p,name:old.name,user_type:old.user_or_group_type,user_id:old.user_or_group_id,
+      asset_type:old.asset_or_node_type,asset_id:old.asset_or_node_id,account_pattern:old.account_pattern,
+      command_filter_id:old.command_filter_id,valid_until:old.valid_until};title='编辑策略 · '+old.name;
+      try{p.rdp=JSON.parse(old.rdp_session_config)||p.rdp}catch(e){}}
+  }
+  const fOpts=filters.map(f=>`<option value="${f.id}">${esc(f.name)}</option>`).join('');
+  openModal(`
+  <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    ${mRow('策略名 *','<input id="p-name" value="'+esc(p.name)+'" placeholder="如 INFRA-生产-全时">')}
+    ${mRow('授权对象','<select id="p-utype" onchange="tgtSwitch()"><option value="group" '+(p.user_type!=='user'?'selected':'')+'>用户组</option><option value="user" '+(p.user_type==='user'?'selected':'')+'>用户</option></select><select id="p-uid"></select>')}
+    ${mRow('目标范围','<select id="p-atype" onchange="tgtSwitch()"><option value="node" '+(p.asset_type!=='asset'?'selected':'')+'>资产节点</option><option value="asset" '+(p.asset_type==='asset'?'selected':'')+'>单个资产</option></select><select id="p-aid"></select>')}
+    ${mRow('账号匹配','<input id="p-acct" value="'+esc(p.account_pattern)+'" class="mono" placeholder="* / root / app*">')}
+    ${mRow('命令过滤','<select id="p-filter">'+fOpts+'</select><div class="hint">SSH 会话生效；RDP 会话不适用命令过滤</div>')}
+    ${mRow('有效期至','<input id="p-valid" type="datetime-local" value="'+esc((p.valid_until||'').toString().slice(0,16))+'"><div class="hint">留空 = 长期有效（临时授权可设过期，到期自动失效）</div>')}
+    ${mRow('RDP 会话策略',`<div class="m-check">
+      <label><span class="switch"><input type="checkbox" id="p-clip" ${p.rdp.clipboard?'checked':''}><span class="sl"></span></span>剪贴板</label>
+      <label><span class="switch"><input type="checkbox" id="p-drive" ${p.rdp.drive?'checked':''}><span class="sl"></span></span>磁盘映射</label>
+      <label><span class="switch"><input type="checkbox" id="p-wm" ${p.rdp.watermark?'checked':''}><span class="sl"></span></span>水印</label>
+    </div><div class="hint">默认建议：剪贴板/磁盘映射关闭，水印开启</div>`)}
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="savePolicy(${id||0})">${id?'保存修改':'创 建'}</button>
+  </div>`);
+  tgtSwitch(p.user_id,p.asset_id);
+  document.getElementById('p-filter').value=p.command_filter_id||1;
+}
+function tgtSwitch(keepUid,keepAid){
+  const ctx=window.__policyCtx;if(!ctx)return;
+  const ut=document.getElementById('p-utype').value,at=document.getElementById('p-atype').value;
+  const uid=document.getElementById('p-uid'),aid=document.getElementById('p-aid');
+  const fill=(sel,list,val)=>{sel.innerHTML=list.map(x=>`<option value="${x.id}">${esc(x.name||x.hostname||x.username)}${x.ip?' ('+esc(x.ip)+')':''}</option>`).join('');if(val)sel.value=val;};
+  fill(uid,ut==='group'?ctx.groups:ctx.users,keepUid||uid.value);
+  fill(aid,at==='node'?ctx.nodes:ctx.assets,keepAid||aid.value);
+}
+async function savePolicy(id){
+  const body={
+    name:document.getElementById('p-name').value.trim(),
+    user_type:document.getElementById('p-utype').value,
+    user_id:+document.getElementById('p-uid').value,
+    asset_type:document.getElementById('p-atype').value,
+    asset_id:+document.getElementById('p-aid').value,
+    account_pattern:document.getElementById('p-acct').value.trim()||'*',
+    command_filter_id:+document.getElementById('p-filter').value||null,
+    valid_until:document.getElementById('p-valid').value||null,
+    rdp_session_config:{
+      clipboard:document.getElementById('p-clip').checked,
+      drive:document.getElementById('p-drive').checked,
+      watermark:document.getElementById('p-wm').checked
+    }
+  };
+  if(!body.name){toast('策略名必填');return}
+  try{
+    await api('/policies'+(id?('/'+id):''),{method:id?'PUT':'POST',body:JSON.stringify(body)});
+    toast(id?'策略已更新':'策略已创建');closeModal();loadPage();
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function togglePolicy(id,cur){
+  try{const r=await api(`/policies/${id}/toggle`,{method:'POST'});toast(r.is_enabled?'策略已启用':'策略已停用');loadPage()}
+  catch(e){toast('操作失败：'+e.message)}
+}
+async function delPolicy(id,name){
+  if(!confirm(`确认删除策略「${name}」？\n删除后相关用户立即失去对应访问权限。`))return;
+  try{await api('/policies/'+id,{method:'DELETE'});toast('已删除策略');loadPage()}
+  catch(e){toast('删除失败：'+e.message)}
+}
+
+// ============ 用户表单（新建/编辑） ============
+async function userForm(id){
+  const groups=await api('/users/groups');
+  window.__groups=groups;
+  let u={username:'',display_name:'',role:'user',is_active:1,is_mfa_enabled:1,groups:[]};
+  let title='新建用户';
+  if(id){
+    const rows=window.__userRows||await api('/users');
+    const old=rows.find(x=>x.id===id);
+    if(old){u={...u,username:old.username,display_name:old.display_name,role:old.role,
+      is_active:old.is_active,is_mfa_enabled:old.is_mfa_enabled,
+      groups:(old.group_names||'').split(',').filter(Boolean)};title='编辑用户 · '+old.username;}
+  }
+  const gCheck=groups.map(g=>`<label><input type="checkbox" id="ug-${g.id}" ${u.groups.includes(g.name)?'checked':''}> ${esc(g.name)}</label>`).join('');
+  openModal(`
+  <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    ${id?'':mRow('用户名 *','<input id="um-user" value="'+esc(u.username)+'" placeholder="登录名（小写字母/数字）">')}
+    ${mRow('显示名','<input id="um-disp" value="'+esc(u.display_name)+'" placeholder="如 张伟">')}
+    ${mRow('角色','<select id="um-role"><option value="user" '+(u.role==='user'?'selected':'')+'>运维用户</option><option value="auditor" '+(u.role==='auditor'?'selected':'')+'>安全审计员</option><option value="admin" '+(u.role==='admin'?'selected':'')+'>系统管理员</option></select>')}
+    ${mRow('密码',`<input id="um-pass" type="password" placeholder="${id?'留空则不修改':'留空默认 ChangeMe@2026'}">`)}
+    ${mRow('用户组',`<div class="m-check">${gCheck}</div>`)}
+    ${mRow('TOTP 双因子',`<div class="m-check">
+      <label><span class="switch"><input type="checkbox" id="um-mfa" ${u.is_mfa_enabled?'checked':''}><span class="sl"></span></span>启用 MFA</label>
+    </div>`)}
+    ${id?mRow('重置 TOTP',`<div class="m-check">
+      <label><span class="switch"><input type="checkbox" id="um-rtotp"><span class="sl"></span></span>生成新密钥（旧动态码立即失效）</label>
+    </div>`):''}
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="saveUser(${id||0})">${id?'保存修改':'创 建'}</button>
+  </div>`);
+}
+async function saveUser(id){
+  const groups=(window.__groups||[]).filter(g=>document.getElementById('ug-'+g.id)?.checked).map(g=>g.id);
+  if(id){
+    const body={
+      display_name:document.getElementById('um-disp').value.trim(),
+      role:document.getElementById('um-role').value,
+      password:document.getElementById('um-pass').value||undefined,
+      groups,is_mfa_enabled:document.getElementById('um-mfa').checked,
+      reset_totp:document.getElementById('um-rtotp')?.checked||false
+    };
+    try{
+      const d=await api('/users/'+id,{method:'PUT',body:JSON.stringify(body)});
+      toast('用户已更新');
+      if(d&&d.totp_secret)showTotpModal(d.totp_secret,d.otpauth_url);
+      else {closeModal();loadPage()}
+    }catch(e){toast('保存失败：'+e.message)}
+  }else{
+    const username=document.getElementById('um-user').value.trim();
+    if(!username){toast('用户名必填');return}
+    try{
+      const d=await api('/users',{method:'POST',body:JSON.stringify({
+        username,password:document.getElementById('um-pass').value||'ChangeMe@2026',
+        display_name:document.getElementById('um-disp').value.trim(),
+        role:document.getElementById('um-role').value,groups})});
+      closeModal();
+      showTotpModal(d.totp_secret,d.otpauth_url,username);
+    }catch(e){toast('创建失败：'+e.message)}
+  }
+}
+function showTotpModal(secret,uri,username){
+  openModal(`
+  <div class="modal-head"><b>TOTP 绑定信息${username?' · '+esc(username):''}</b><button class="modal-x" onclick="closeModal();loadPage()">✕</button></div>
+  <div class="modal-body">
+    <div style="font-size:12.5px;color:var(--text-2);line-height:1.8">
+      请让该用户在 <b>Google Authenticator</b> 中「输入设置密钥」，粘贴下方 Secret（或扫 otpauth 二维码）：<br>
+      <div class="mono" style="background:var(--primary-light);color:var(--primary);padding:10px 14px;border-radius:10px;font-size:14px;letter-spacing:1px;margin:8px 0;user-select:all">${esc(secret)}</div>
+      <div class="mono" style="font-size:11px;color:var(--text-3);word-break:break-all;user-select:all">${esc(uri)}</div>
+    </div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(secret)}');toast('Secret 已复制')">复制 Secret</button>
+    <button class="btn btn-primary" onclick="closeModal();loadPage()">我已保存，关闭</button>
+  </div>`);
+}
+async function toggleUser(id,cur){
+  try{const r=await api(`/users/${id}/toggle`,{method:'POST'});toast(r.is_active?'用户已启用':'用户已禁用');loadPage()}
+  catch(e){toast('操作失败：'+e.message)}
+}
+async function delUser(id,name){
+  if(!confirm(`确认删除用户「${name}」？\n其组关系立即移除；历史审计日志保留。`))return;
+  try{await api('/users/'+id,{method:'DELETE'});toast('已删除用户');loadPage()}
+  catch(e){toast('删除失败：'+e.message)}
+}
+
+// ============ 用户组表单 ============
+async function groupForm(id){
+  let g={name:'',description:''};
+  let title='新建用户组';
+  if(id){
+    const rows=window.__groupRows||await api('/users/groups');
+    const old=rows.find(x=>x.id===id);
+    if(old){g={name:old.name,description:old.description||''};title='编辑用户组 · '+old.name;}
+  }
+  openModal(`
+  <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    ${mRow('组名 *','<input id="g-name" value="'+esc(g.name)+'" placeholder="如 network">')}
+    ${mRow('描述','<input id="g-desc" value="'+esc(g.description)+'" placeholder="如 网络组">')}
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="saveGroup(${id||0})">${id?'保存修改':'创 建'}</button>
+  </div>`);
+}
+async function saveGroup(id){
+  const body={
+    name:document.getElementById('g-name').value.trim(),
+    description:document.getElementById('g-desc').value.trim()
+  };
+  if(!body.name){toast('组名必填');return}
+  try{
+    await api('/users/groups'+(id?('/'+id):''),{method:id?'PUT':'POST',body:JSON.stringify(body)});
+    toast(id?'用户组已更新':'用户组已创建');closeModal();loadPage();
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function viewGroupMembers(gid,name){
+  const members=await api(`/users/groups/${gid}/members`);
+  const tr=members.map(m=>`<tr><td><b>${esc(m.username)}</b></td><td>${esc(m.display_name||'-')}</td>
+    <td>${{admin:'管理员',auditor:'审计员',user:'用户'}[m.role]||m.role}</td>
+    <td>${m.is_active?badge('正常','green'):badge('禁用','red')}</td></tr>`).join('');
+  openModal(`
+  <div class="modal-head"><b>组成员 · ${esc(name)}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body" style="padding:12px 24px">
+    ${members.length?`<table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>状态</th></tr></thead><tbody>${tr}</tbody></table>`
+      :'<div class="empty">该组暂无成员（在「用户管理」编辑用户时勾选本组）</div>'}
+  </div>
+  <div class="modal-foot"><button class="btn btn-primary" onclick="closeModal()">关 闭</button></div>`);
+}
+async function delGroup(id,name){
+  if(!confirm(`确认删除用户组「${name}」？`))return;
+  try{await api('/users/groups/'+id,{method:'DELETE'});toast('已删除用户组');loadPage()}
+  catch(e){toast('删除失败：'+e.message)}
+}
+
+// ============ V1.1 P0-4 高危规则集 ============
+async function filterForm(id){
+  let f={name:'',rules:[]};
+  let title='新建规则集';
+  if(id){
+    const rows=window.__filterRows||await api('/filters');
+    const old=rows.find(x=>x.id===id);
+    if(old){f={name:old.name,rules:JSON.parse(old.rules||'[]')};title='编辑规则集 · '+old.name;}
+  }
+  if(!f.rules.length)f.rules=[{name:'',regex:'',action:'block'}];
+  openModal(`
+  <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body" style="max-height:64vh;overflow:auto">
+    ${mRow('规则集名 *','<input id="f-name" value="'+esc(f.name)+'" placeholder="如 生产严格库">')}
+    <div class="m-row"><label>规则列表 <span class="hint" style="font-weight:400">正则匹配输入命令，命中即执行动作</span></label>
+      <table class="rule-table"><thead><tr><th style="width:130px">名称</th><th>正则（命中命令）</th><th style="width:86px">动作</th><th style="width:36px"></th></tr></thead>
+      <tbody id="fr-tbody">${f.rules.map((r,i)=>frRuleRow(r,i)).join('')}</tbody></table>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" onclick="frAddRow()">＋ 添加规则</button>
+        <button class="btn btn-sm btn-ghost" onclick="frTpl('prod')">📋 常用：生产严格</button>
+        <button class="btn btn-sm btn-ghost" onclick="frTpl('safe')">📋 常用：宽松观察</button>
+      </div>
+      <div class="hint" style="margin-top:8px;line-height:1.7">动作说明：<b>阻断</b>=拦截命令并告警审计 · <b>告警</b>=放行但记录高危审计</div>
+    </div>
+  </div>
+  <div class="modal-foot">
+    <span class="hint" id="fr-count"></span>
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="saveFilter(${id||0})">${id?'保存修改':'创 建'}</button>
+  </div>`);
+  frBindLive();
+}
+function frRuleRow(r,i){
+  return `<tr>
+    <td><input class="fr-cell" data-k="name" value="${esc(r.name||'')}" placeholder="规则名（可空）"></td>
+    <td><input class="fr-cell mono" data-k="regex" value="${esc(r.regex||'')}" placeholder="如 ^rm\\s+-rf\\s+/" style="flex:1"></td>
+    <td><select class="fr-cell" data-k="action">
+      <option value="block" ${r.action!=='alert'?'selected':''}>🚫 阻断</option>
+      <option value="alert" ${r.action==='alert'?'selected':''}>⚠️ 告警</option></select></td>
+    <td><button class="btn btn-sm btn-danger" title="删除此行" onclick="this.closest('tr').remove();frCount()">✕</button></td></tr>`;
+}
+function frAddRow(){
+  document.getElementById('fr-tbody').insertAdjacentHTML('beforeend',frRuleRow({name:'',regex:'',action:'block'},0));
+  frBindLive();frCount();
+  const rows=document.querySelectorAll('#fr-tbody tr');
+  rows[rows.length-1].querySelector('input[data-k=regex]').focus();
+}
+function frBindLive(){
+  document.querySelectorAll('#fr-tbody input[data-k=regex]').forEach(inp=>{
+    inp.oninput=()=>{
+      inp.style.borderColor='';
+      inp.title='';
+      if(inp.value && !frValidRe(inp.value)){inp.style.borderColor='#f38ba8';inp.title='正则语法错误';}
+      frCount();
+    };
+  });
+  frCount();
+}
+function frValidRe(s){try{new RegExp(s);return true}catch(e){return false}}
+function frCount(){
+  const el=document.getElementById('fr-count');
+  if(!el)return;
+  const rows=[...document.querySelectorAll('#fr-tbody tr')].filter(tr=>tr.querySelector('input[data-k=regex]').value.trim());
+  el.textContent=rows.length?`${rows.length} 条有效规则`:'尚未填写规则';
+}
+function frTpl(kind){
+  const tpl=kind==='prod'?[
+    {name:'强制删除',regex:'^rm\\s+(-[a-zA-Z]*f[a-zA-Z]*|--)',action:'block'},
+    {name:'格式化',regex:'^(mkfs|fdisk|parted)\\b',action:'block'},
+    {name:'递归改权',regex:'^chmod\\s+-R\\s+777',action:'block'},
+    {name:'_kernel 模块',regex:'^(rmmod|insmod)\\b',action:'alert'},
+    {name:'计划任务',regex:'^(crontab|at)\\b',action:'alert'},
+    {name:'用户管理',regex:'^(userdel|passwd)\\b',action:'alert'},
+  ]:[
+    {name:'强制删除',regex:'^rm\\s+-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*',action:'block'},
+    {name:'格式化',regex:'^mkfs\\b',action:'block'},
+    {name:'提权',regex:'sudo\\s+su',action:'alert'},
+  ];
+  document.getElementById('fr-tbody').innerHTML=tpl.map((r,i)=>frRuleRow(r,i)).join('');
+  frBindLive();
+}
+async function saveFilter(id){
+  const name=document.getElementById('f-name').value.trim();
+  if(!name){toast('规则集名必填');return}
+  const rules=[];const seen=new Set();let bad=0;
+  document.querySelectorAll('#fr-tbody tr').forEach(tr=>{
+    const get=k=>tr.querySelector(`[data-k=${k}]`);
+    const regex=get('regex').value.trim();
+    if(!regex)return;
+    if(!frValidRe(regex)){bad++;get('regex').style.borderColor='#f38ba8';return}
+    if(seen.has(regex)){return}          // 同正则去重（静默合并）
+    seen.add(regex);
+    rules.push({name:get('name').value.trim()||regex.slice(0,16),regex,action:get('action').value});
+  });
+  if(bad){toast(`${bad} 条正则语法错误，已红框标出`);return}
+  if(!rules.length){toast('至少填写一条有效规则');return}
+  try{
+    await api('/filters'+(id?('/'+id):''),{method:id?'PUT':'POST',body:JSON.stringify({name,rules})});
+    toast(id?'规则集已更新':'规则集已创建');closeModal();loadPage();
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function delFilter(id,name){
+  if(!confirm(`确认删除规则集「${name}」？`))return;
+  try{await api('/filters/'+id,{method:'DELETE'});toast('已删除');loadPage()}
+  catch(e){toast('删除失败：'+e.message)}
+}
+
+// ============ V1.1 P1：探测 / 导入 / 监视 / Webhook ============
+async function probeAsset(id,btn){
+  btn.textContent='...';
+  try{
+    const r=await api(`/assets/${id}/probe`,{method:'POST'});
+    toast(r.reachable?`✅ 可达 (${r.latency_ms}ms)`:`❌ 不可达 (${r.host}:${r.port})`);
+    loadPage();
+  }catch(e){toast('探测失败：'+e.message);btn.textContent='探测'}
+}
+async function importAssets(){
+  openModal(`
+  <div class="modal-head"><b>CSV 批量导入资产</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    <div style="font-size:12px;color:var(--text-3);line-height:1.8;margin-bottom:8px">
+    格式（每行一台，列顺序固定，前两列必填）：<br>
+    <span class="mono" style="background:var(--primary-light);padding:6px 10px;border-radius:8px;display:block;margin:6px 0">hostname,ip,protocol,os_type,node_name,account,password,ssh_port,rdp_port</span>
+    示例：<span class="mono">web-01,192.168.1.10,ssh,CentOS 7.9,生产区,root,P@ss,22</span></div>
+    <textarea id="imp-csv" rows="8" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px" placeholder="粘贴 CSV 内容..."></textarea>
+    <div id="imp-result" style="font-size:12px;margin-top:8px"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="doImport()">导 入</button>
+  </div>`);
+}
+async function doImport(){
+  const csv=document.getElementById('imp-csv').value.trim();
+  if(!csv){toast('请粘贴 CSV 内容');return}
+  try{
+    const r=await api('/assets/import',{method:'POST',body:JSON.stringify({csv})});
+    document.getElementById('imp-result').innerHTML=
+      `✅ 成功导入 <b>${r.created}</b> / ${r.total} 行`+(r.errors.length?`<br><span style="color:var(--red)">错误：<br>${r.errors.map(esc).join('<br>')}</span>`:'');
+    if(r.created>0)setTimeout(loadPage,800);
+  }catch(e){toast('导入失败：'+e.message)}
+}
+function watchSession(sid){
+  window.open(`/watch.html?token=${TOKEN}&sid=${sid}`,'_blank','width=900,height=600');
+}
+async function saveWebhook(){
+  try{
+    await api('/settings/webhook',{method:'POST',body:JSON.stringify({urls:document.getElementById('wh-urls').value})});
+    toast('Webhook 配置已保存');
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function testWebhook(){
+  const btn=document.getElementById('wh-test-btn');
+  const box=document.getElementById('wh-test-result');
+  btn.disabled=true;btn.textContent='测试中…';
+  box.innerHTML='<span style="font-size:12px;color:#6c7086">正在向目标地址发送测试消息…</span>';
+  try{
+    const r=await api('/settings/webhook/test',{method:'POST',body:JSON.stringify({urls:document.getElementById('wh-urls').value})});
+    if(!r.results||!r.results.length){
+      box.innerHTML='<div style="font-size:12px;color:#e5484d;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px">⚠️ '+esc(r.message||'未配置地址')+' —— 请先填写并保存 Webhook 地址</div>';
+      return;
+    }
+    const items=r.results.map(x=>{
+      const shortUrl=x.url.length>60?x.url.slice(0,57)+'…':x.url;
+      return x.ok
+        ?'<div style="font-size:12px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;margin-bottom:6px">✅ <span class="mono">'+esc(shortUrl)+'</span> — HTTP '+x.status+' · '+x.ms+'ms</div>'
+        :'<div style="font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin-bottom:6px">❌ <span class="mono">'+esc(shortUrl)+'</span> — '+esc(x.error||'发送失败')+'</div>';
+    }).join('');
+    const okN=r.results.filter(x=>x.ok).length;
+    const head=okN===r.results.length
+      ?'<div style="font-weight:600;color:#166534;margin-bottom:8px">🎉 '+esc(r.message)+' —— 高危命令告警通道正常，测试消息已推送到目标群</div>'
+      :'<div style="font-weight:600;color:#b91c1c;margin-bottom:8px">⚠️ '+esc(r.message)+' —— 请检查失败地址（格式/网络/机器人安全设置）</div>';
+    box.innerHTML=head+items;
+  }catch(e){
+    box.innerHTML='<div style="font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px">❌ 测试请求失败：'+esc(e.message)+'</div>';
+  }finally{
+    btn.disabled=false;btn.textContent='📡 发送测试';
+  }
+}
+
+// ============ LDAP 目录认证（真实对接） ============
+async function ldapLoad(){
+  try{
+    const c=await api('/settings/ldap');
+    if(c&&c.id){
+      document.getElementById('ldap-enabled').checked=!!c.enabled;
+      document.getElementById('ldap-url').value=c.url||'ldaps://127.0.0.1:636';
+      document.getElementById('ldap-basedn').value=c.base_dn||'dc=example,dc=com';
+      document.getElementById('ldap-binddn').value=c.bind_dn||'';
+      document.getElementById('ldap-starttls').checked=!!c.starttls;
+      document.getElementById('ldap-insecure').checked=!!c.insecure;
+      document.getElementById('ldap-loginattr').value=c.login_attr||'uid';
+      document.getElementById('ldap-nameattr').value=c.name_attr||'cn';
+      document.getElementById('ldap-mailattr').value=c.mail_attr||'mail';
+      document.getElementById('ldap-userfilter').value=c.user_filter||'(objectClass=inetOrgPerson)';
+      document.getElementById('ldap-map-admin').value=c.map_admin||'';
+      document.getElementById('ldap-map-auditor').value=c.map_auditor||'';
+      const maps=(()=>{try{return JSON.parse(c.group_maps||'[]')}catch(e){return[]}})();
+      document.getElementById('ldap-groupmap').innerHTML='';
+      maps.forEach(m=>{ldapAddMap();const rows=document.querySelectorAll('#ldap-groupmap > div');const r=rows[rows.length-1];
+        r.querySelector('.ldap-src').value=m.src;r.querySelector('.ldap-dst').value=m.dst;});
+      ldapToggle();
+    }
+  }catch(e){}
+}
+function ldapToggle(){
+  const on=document.getElementById('ldap-enabled').checked;
+  document.getElementById('ldap-form').style.display=on?'':'none';
+  document.getElementById('ldap-state').textContent=on?'当前：已启用（登录走目录认证）':'当前：未启用';
+  if(on&&!document.getElementById('ldap-groupmap').children.length)ldapAddMap();
+}
+function ldapAddMap(){
+  const groups=(window.__groups||[{id:1,name:'infra'},{id:2,name:'dev'},{id:3,name:'dba'}]);
+  const opts=groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  const row=document.createElement('div');
+  row.style.cssText='display:grid;grid-template-columns:1fr 34px 200px 40px;gap:10px;align-items:center';
+  row.innerHTML=`<input class="mono ldap-src" placeholder="cn=infra,ou=groups,dc=example,dc=com" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+    <span style="color:var(--text-3);text-align:center">→</span>
+    <select class="ldap-dst" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">${opts}</select>
+    <button class="btn btn-sm btn-danger" onclick="this.closest('div').remove()">✕</button>`;
+  document.getElementById('ldap-groupmap').appendChild(row);
+}
+function ldapCollect(){
+  const maps=[...document.querySelectorAll('#ldap-groupmap > div')].map(r=>({
+    src:r.querySelector('.ldap-src').value.trim(),dst:+r.querySelector('.ldap-dst').value}));
+  return {
+    enabled:document.getElementById('ldap-enabled').checked,
+    url:document.getElementById('ldap-url').value.trim(),
+    base_dn:document.getElementById('ldap-basedn').value.trim(),
+    bind_dn:document.getElementById('ldap-binddn').value.trim(),
+    starttls:document.getElementById('ldap-starttls').checked,
+    insecure:document.getElementById('ldap-insecure').checked,
+    login_attr:document.getElementById('ldap-loginattr').value.trim(),
+    name_attr:document.getElementById('ldap-nameattr').value.trim(),
+    mail_attr:document.getElementById('ldap-mailattr').value.trim(),
+    user_filter:document.getElementById('ldap-userfilter').value.trim(),
+    map_admin:document.getElementById('ldap-map-admin').value.trim(),
+    map_auditor:document.getElementById('ldap-map-auditor').value.trim(),
+    group_maps:maps.filter(m=>m.src)
+  };
+}
+function ldapValidate(c){
+  if(!/^ldaps?:\/\/.+:\d+$/.test(c.url))return 'LDAP URL 格式应为 ldaps://host:636 或 ldap://host:389';
+  if(!c.base_dn||!/^(dc|ou|cn)=/.test(c.base_dn))return 'Base DN 应以 dc=/ou=/cn= 开头';
+  if(!c.bind_dn||!/^(cn|uid)=/.test(c.bind_dn))return 'Bind DN 格式有误';
+  if(c.url.startsWith('ldap://')&&!c.starttls)return 'ldap:// 389 明文被拒绝：请改用 ldaps:// 或勾选 StartTLS';
+  if(!c.login_attr)return '登录名属性必填';
+  if(!c.user_filter.startsWith('(')||!c.user_filter.endsWith(')'))return 'User Filter 应为括号表达式，如 (objectClass=inetOrgPerson)';
+  return '';
+}
+async function ldapSave(){
+  const c=ldapCollect();
+  const err=ldapValidate(c);
+  const box=document.getElementById('ldap-result');
+  if(err){box.innerHTML=`<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#cf1322">❌ ${err}</div>`;return}
+  try{
+    await api('/settings/ldap',{method:'POST',body:JSON.stringify({...c,bind_pw:document.getElementById('ldap-bindpw').value||undefined})});
+    box.innerHTML=`<div style="background:#f6ffed;border:1px solid #b7eb8f;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#389e0d">✅ 目录配置已保存（Bind 密码 AES 加密存储）</div>`;
+    toast('目录配置已保存');
+  }catch(e){box.innerHTML=`<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#cf1322">❌ 保存失败：${esc(e.message)}</div>`}
+}
+async function ldapTest(){
+  const c=ldapCollect();
+  const err=ldapValidate(c);
+  const btn=document.getElementById('ldap-test-btn');
+  const box=document.getElementById('ldap-result');
+  if(err){box.innerHTML=`<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#cf1322">❌ 连接测试未执行：${err}</div>`;return}
+  btn.disabled=true;btn.textContent='⏳ 测试中...';
+  try{
+    const r=await api('/settings/ldap/test',{method:'POST',body:JSON.stringify({...c,bind_pw:document.getElementById('ldap-bindpw').value||undefined})});
+    const rows=(r.steps||[]).map(s=>`${s.pass?'<b style="color:#389e0d">✓</b>':'<b style="color:#cf1322">✗</b>'} ${esc(s.name)}${s.detail?` <span style="color:var(--text-3)">${esc(s.detail)}</span>`:''}`).join('<br>');
+    box.innerHTML=`<div style="background:${r.ok?'#f6ffed':'#fff1f0'};border:1px solid ${r.ok?'#b7eb8f':'#ffa39e'};border-radius:10px;padding:12px 14px;font-size:12.5px">
+      <b style="color:${r.ok?'#389e0d':'#cf1322'}">⚡ 测试连接 ${r.ok?'成功':'失败'}</b><br><span style="line-height:1.9">${rows}</span></div>`;
+  }catch(e){box.innerHTML=`<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#cf1322">❌ 测试请求失败：${esc(e.message)}</div>`}
+  btn.disabled=false;btn.textContent='⚡ 测试连接';
+}
+async function ldapSync(){
+  const box=document.getElementById('ldap-result');
+  box.innerHTML='<div style="font-size:12.5px;color:var(--text-3)">⏳ 同步中...</div>';
+  try{
+    const r=await api('/settings/ldap/sync',{method:'POST'});
+    if(r.error){box.innerHTML=`<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#cf1322">❌ 同步失败：${esc(r.error)}</div>`;return}
+    box.innerHTML=`<div style="background:#f9f0ff;border:1px solid #d3adff;border-radius:10px;padding:12px 14px;font-size:12.5px">
+      <b style="color:#722ed1">🔄 全量同步完成</b><br>
+      <span style="color:var(--text-2);line-height:1.9">目录用户 <b>${r.total_ldap||0}</b> · 更新/同步 <b>${r.updated||0}</b> · 新增 <b>${r.created||0}</b> · 标记 suspended <b>${r.suspended||0}</b>
+      ${(r.details||[]).length?`<br>${r.details.slice(0,5).map(esc).join('<br>')}`:''}</span></div>`;
+    toast('全量同步完成');
+  }catch(e){box.innerHTML=`<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#cf1322">❌ 同步失败：${esc(e.message)}</div>`}
+}
+function ldapReset(){
+  document.getElementById('ldap-groupmap').innerHTML='';
+  document.getElementById('ldap-result').innerHTML='';
+  document.getElementById('ldap-enabled').checked=false;
+  ldapToggle();
+}
+
+async function sshConnect(assetId){
+  const accs=await api(`/assets/${assetId}/accounts`);
+  if(!accs.length){toast('该资产未托管账号（管理员创建资产时可指定）');return}
+  const acc=accs[0];
+  const url=`/terminal.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}&user=${encodeURIComponent(USER.username)}`;
+  window.open(url,'_blank');
+}
+async function rdpConnect(assetId){
+  const accs=await api(`/assets/${assetId}/accounts`);
+  if(!accs.length){toast('该资产未托管账号');return}
+  try{
+    // 默认 1024x768；用户可在 RDP 窗口顶栏切换常用分辨率
+    const d=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
+      asset_id:assetId,account_id:accs[0].id,
+      screen_width:1024,screen_height:768})});
+    // 记住上下文，供分辨率切换重连
+    window.__rdpCtx={assetId,accId:accs[0].id};
+    const url=`/rdp.html?token=${encodeURIComponent(d.token)}&user=${encodeURIComponent(USER.username)}`;
+    window.open(url,'_blank');
+  }catch(e){toast('RDP 授权失败：'+e.message)}
+}
+async function killSess(sid){
+  try{await api(`/sessions/${sid}/kill`,{method:'POST'});toast('会话已断开：'+sid);loadPage()}catch(e){toast('失败：'+e.message)}
+}
+async function viewCast(sid, protocol){
+  // SSH=cast 播放器；RDP=SessionRecording 回放器
+  const page = protocol==='rdp' ? 'rdp-player.html' : 'player.html';
+  window.open(`/${page}?token=${TOKEN}&sid=${sid}`,'_blank','width=1080,height=720');
+}
+
+// RDP 分辨率切换：子窗请求 → 申请新 token 回传
+window.addEventListener('message',async ev=>{
+  const d=ev.data||{};
+  if(d.type==='nb-rdp-resize' && window.__rdpCtx){
+    try{
+      const r=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
+        asset_id:window.__rdpCtx.assetId,account_id:window.__rdpCtx.accId,
+        screen_width:d.width,screen_height:d.height})});
+      ev.source.postMessage({type:'nb-rdp-newtoken',token:r.token},'*');
+    }catch(e){ /* 主窗口可能已过期，子窗提示 */ }
+  }
+});
+
+// 已有 token 自动进入
+if(TOKEN&&USER){
+  document.getElementById('login-page').style.display='none';
+  document.getElementById('app').style.display='block';
+  fillUserBar();
+  go('dashboard');
+}
+</script>
+</body>
+</html>

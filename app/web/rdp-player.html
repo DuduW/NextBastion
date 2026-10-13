@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NextBastion RDP 会话回放</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#11111b;height:100vh;display:flex;flex-direction:column;overflow:hidden;font-family:"Noto Sans SC",sans-serif}
+  .bar{background:#181825;padding:10px 16px;display:flex;align-items:center;gap:14px;color:#cdd6f4;font-size:13px}
+  .bar b{color:#89b4fa}
+  #disp-wrap{flex:1;min-height:0;background:#000;overflow:hidden;position:relative}
+  /* guac 库对内层 div/canvas 写内联尺寸——用 transform 整体缩放适配视口（对内联样式免疫） */
+  #disp-wrap>div{position:absolute!important;left:50%!important;top:50%!important;transform-origin:center center!important}
+  .ctrl{background:#181825;padding:12px 16px;display:flex;align-items:center;gap:12px}
+  button{background:#45475a;color:#cdd6f4;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px}
+  button:hover{background:#585b70}
+  button.primary{background:#89b4fa;color:#1e1e2e;font-weight:600}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  input[type=range]{flex:1;accent-color:#89b4fa}
+  .speed{display:flex;gap:4px}
+  .speed button{padding:6px 10px;font-size:12px;border-radius:6px}
+  .speed button.on{background:#89b4fa;color:#1e1e2e;font-weight:600}
+  #t-cur,#t-total{font-family:monospace;color:#a6adc8;font-size:12px;min-width:52px}
+  .hint{font-size:11px;color:#6c7086}
+</style>
+</head>
+<body>
+<div class="bar">🎬 RDP 会话回放 <b id="sid"></b> · <span id="meta">加载中...</span></div>
+<div id="disp-wrap"></div>
+<div class="ctrl">
+  <button id="btn-play" class="primary" disabled>▶ 播放</button>
+  <span id="t-cur">00:00</span>
+  <input type="range" id="seek" min="0" max="1000" value="0" disabled>
+  <span id="t-total">--:--</span>
+  <div class="speed" id="speeds"></div>
+  <span class="hint">guac 录制流 · 拖动跳转</span>
+</div>
+<script src="vendor/guacamole-common.js?v=155"></script>
+<script>
+const qs=new URLSearchParams(location.search);
+const TOKEN=qs.get('token'),SID=qs.get('sid');
+document.getElementById('sid').textContent=SID;
+
+// 官方 API：SessionRecording(source) —— source 直接传 Blob（内部建 StringReader 通道）
+const recording=new Guacamole.SessionRecording(new Blob());
+const display=recording.getDisplay();
+const wrap=document.getElementById('disp-wrap');
+wrap.appendChild(display.getElement());
+
+const fmt=s=>{s=Math.max(0,Math.floor(s));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
+
+
+// 加载录像数据（重新以数据 Blob 构造 recording）
+(async()=>{
+  try{
+    const r=await fetch(`/api/v1/sessions/${SID}/cast`,{headers:{Authorization:'Bearer '+TOKEN}});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const blob=await r.blob();
+    // 用真实数据重建（官方用法：new SessionRecording(blob)）
+    const rec=new Guacamole.SessionRecording(blob);
+    window.__rec=rec;
+    // 重绑事件与显示
+    bindRecording(rec);
+  }catch(e){
+    document.getElementById('meta').textContent='录像加载失败：'+e.message;
+  }
+})();
+function bindRecording(rec){
+  const d=rec.getDisplay();
+  const w=document.getElementById('disp-wrap');
+  w.innerHTML=''; w.appendChild(d.getElement());
+  rec.onseek=()=>refreshUI(rec);
+  rec.onplay=()=>{document.getElementById('btn-play').textContent='⏸ 暂停'};
+  rec.onpause=()=>{document.getElementById('btn-play').textContent='▶ 播放'};
+  const fitPlayer=()=>{
+    const d=rec.getDisplay().getElement();
+    const cw=d.scrollWidth||parseInt(d.style.width)||0, ch=d.scrollHeight||parseInt(d.style.height)||0;
+    const wrap=document.getElementById('disp-wrap');
+    if(!cw||!ch||!wrap.clientWidth)return;
+    const sc=Math.min(wrap.clientWidth/cw, wrap.clientHeight/ch);
+    d.style.transform=`translate(-50%,-50%) scale(${sc})`;
+  };
+  window.addEventListener('resize',fitPlayer);
+  setInterval(fitPlayer,600);
+  rec.onload=()=>{
+    const dur=rec.getDuration();
+    document.getElementById('meta').textContent='时长 '+fmt(dur/1000);
+    fitPlayer();
+    document.getElementById('t-total').textContent=fmt(dur/1000);
+    document.getElementById('seek').disabled=false;
+    document.getElementById('btn-play').disabled=false;
+    document.getElementById('speeds').innerHTML=[1,2,4,8].map(r=>
+      `<button data-r="${r}" class="${r===1?'on':''}" onclick="window.setRate(${r})">${r}x</button>`).join('');
+    refreshUI(rec);
+  };
+  window.__seekDo=ms=>rec.seek(ms,()=>refreshUI(rec));
+  document.getElementById('seek').oninput=e=>{
+    const dur=rec.getDuration()||1;
+    window.__seekDo(+e.target.value/1000*dur);
+  };
+  document.getElementById('btn-play').onclick=()=>{ rec.isPlaying()?rec.pause():rec.play(); };
+  window.setRate=r=>{
+    if(rec.setRate)rec.setRate(r);
+    document.querySelectorAll('#speeds button').forEach(b=>b.classList.toggle('on',+b.dataset.r===r));
+  };
+  setInterval(()=>{ if(rec.isPlaying())refreshUI(rec); },250);
+}
+function refreshUI(rec){
+  const pos=rec.getPosition(), dur=rec.getDuration()||1;
+  document.getElementById('t-cur').textContent=fmt(pos/1000);
+  document.getElementById('seek').value=Math.round(pos/dur*1000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NextBastion RDP 远程桌面</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#1e1e2e;height:100vh;display:flex;flex-direction:column;overflow:hidden;font-family:"Noto Sans SC",sans-serif}
+  .bar{background:#11111b;padding:7px 16px;display:flex;align-items:center;gap:12px;font-size:12px;color:#a6adc8;flex:none}
+  .rec{color:#f38ba8;font-weight:600}.rec::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#f38ba8;margin-right:6px;animation:blink 1.2s infinite}
+  @keyframes blink{50%{opacity:.2}}
+  .btn{margin-left:auto;background:#45475a;color:#cdd6f4;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px}
+  .btn:hover{background:#585b70}
+  .btn-quit{background:#f38ba8;color:#111}
+  .res-sel{background:#45475a;color:#cdd6f4;border:1px solid #585b70;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;outline:none}
+  .res-sel:hover{background:#585b70}
+  #display{flex:1;position:relative;min-height:0;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  /* 布局由 flex 居中；缩放由库原生 display.scale（自动同步 bounds 尺寸与鼠标坐标换算） */
+  #display>div:not(#watermark):not(#watermark2):not(.msg){position:relative!important;flex-shrink:0}
+  .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#a6adc8;font-size:14px;flex-direction:column;gap:10px}
+  #watermark{position:absolute;right:16px;bottom:14px;z-index:99;color:rgba(255,255,255,.28);font-size:11px;font-family:monospace;pointer-events:none}
+  #watermark2{position:absolute;left:16px;top:12px;z-index:99;color:rgba(255,255,255,.18);font-size:11px;font-family:monospace;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="bar">
+  <span id="info">RDP 连接中...</span>
+  <span class="rec">REC</span>
+  <select id="res-sel" class="res-sel" onchange="this.dataset.dirty=1;changeRes()">
+    <option value="1024x768">1024 × 768</option>
+    <option value="1280x720">1280 × 720</option>
+    <option value="1280x800">1280 × 800</option>
+    <option value="1440x900">1440 × 900</option>
+    <option value="1600x900">1600 × 900</option>
+    <option value="1920x1080">1920 × 1080（全屏）</option>
+    <option value="0x0">屏幕原始分辨率</option>
+  </select>
+  <button class="btn" onclick="goFullscreen()">⛶ 全屏</button>
+  <button class="btn btn-quit" onclick="window.close()">断开</button>
+</div>
+<div id="display"><div class="msg" id="status">正在建立 RDP 通道（guacd）...</div>
+<div id="watermark"></div><div id="watermark2"></div></div>
+
+<script src="vendor/guacamole-common.js?v=155"></script>
+<script>
+const qs=new URLSearchParams(location.search);
+const TOKEN=qs.get('token'), USER=qs.get('user')||'';
+// 初始分辨率（与本次会话一致，用于 select 回显）
+const RES_PRESETS=[[1024,768],[1280,720],[1280,800],[1440,900],[1600,900],[1920,1080]];
+// 防拍屏暗水印（P0-2）：用户名+IP+时间+随机会话标识
+(function(){
+  const now=new Date(), pad=n=>String(n).padStart(2,'0');
+  const ts=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const rnd=Math.random().toString(36).slice(2,8).toUpperCase();
+  const ip=(location.hostname||'-')+' · '+rnd;
+  document.getElementById('watermark').textContent=`${USER} · ${ip} · ${ts}`;
+  document.getElementById('watermark2').textContent=`NextBastion · ${USER}`;
+  setInterval(()=>{const d=new Date();
+    document.getElementById('watermark').textContent=`${USER} · ${ip} · ${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  },60000);
+})();
+
+// ===== 最小 Guacamole 客户端（官方协议实现：Tunnel+Client+Canvas）=====
+// WS Tunnel
+function WSTunnel(url){
+  const t=new Guacamole.WebSocketTunnel(url);
+  return t;
+}
+const tunnel=WSTunnel(`ws${location.protocol==='https:'?'s':''}://${location.host}/ws/guac/${encodeURIComponent(TOKEN)}`);
+const client=new Guacamole.Client(tunnel);
+
+const display=client.getDisplay();
+const dispEl=document.getElementById('display');
+dispEl.appendChild(display.getElement());
+// 布局策略：CSS max-width/max-height 自适应（窗口/全屏通用，无需手动 scale 计算）。
+// 库的鼠标事件基于 canvas getBoundingClientRect 换算，CSS 缩放下坐标依然精确。
+const ensureAttached=()=>{
+  const el=display.getElement();
+  if(el && el.parentElement!==dispEl) dispEl.appendChild(el);
+  fitDisplay();
+};
+// 首帧到达时立即强算（frameWatch 检出首帧同帧调用）——已并入 frameWatch 回调
+// 官方缩放机制：设置 display.scale → 库自动同步 bounds div 尺寸（鼠标事件坐标= bounds 局部坐标，sendMouseState 自动除以 scale 还原）
+function fitDisplay(){
+  const w=display.getWidth?display.getWidth():0, h=display.getHeight?display.getHeight():0;
+  if(!w||!h||!dispEl.clientWidth||!dispEl.clientHeight)return;
+  const sc=Math.min(dispEl.clientWidth/w, dispEl.clientHeight/h);
+  // 官方 API：display.scale(s) 是函数（内部 CSS transform + 鼠标换算联动），getScale() 读当前值
+  if(sc>0 && Math.abs(display.getScale()-sc)>0.002) display.scale(sc);
+}
+// 高频重算（窗口模式首帧/resize 竞态兜底）
+setInterval(fitDisplay,300);
+display.onresize=function(w,h){
+  ensureAttached();
+  // 回显当前分辨率到选择器
+  const sel=document.getElementById('res-sel');
+  if(sel && w && h && !sel.dataset.dirty){
+    const hit=RES_PRESETS.find(p=>p[0]===w&&p[1]===h);
+    sel.value=hit?hit[0]+'x'+hit[1]:'0x0';
+  }
+};
+window.addEventListener('resize',fitDisplay);
+setInterval(ensureAttached,500);
+
+
+// 连接进度层：保留至首帧画面到达（防黑屏期无反馈），canvas 有内容后隐藏
+const statusEl=document.getElementById('status');
+let __firstFrame=false;
+const hideStatus=()=>{ if(__firstFrame || client.currentState===2){ statusEl.style.display='none'; } };
+client.onstatechange=function(s){
+  const names=['空闲','连接中','等待画面','已连接','断开中','已断开'];
+  document.getElementById('info').textContent='RDP · '+USER+' · '+(names[s]||s);
+  if(s===2){ statusEl.textContent='正在建立远程桌面（3~8 秒）...'; }
+  hideStatus();
+};
+// 轮询检测画布是否已有内容（首帧到达即隐藏提示）
+const frameWatch=setInterval(()=>{
+  const c=document.querySelector('#display canvas');
+  if(c && c.width>0 && c.height>0){
+    try{
+      // 三带采样（上/中/下），任一带出现非黑像素即认定首帧到达
+      const bands=[[0,2],[Math.floor(c.height/2),2],[c.height-2,2]];
+      for(const [by,bh] of bands){
+        const d=c.getContext('2d').getImageData(0,Math.max(0,by),c.width,bh).data;
+        let lit=0;
+        for(let i=0;i<d.length;i+=16){ if(d[i]+d[i+1]+d[i+2]>15) lit++; }
+        if(lit>3){ __firstFrame=true; break; }
+      }
+    }catch(e){}
+  }
+  if(__firstFrame){ statusEl.style.display='none'; fitDisplay(); clearInterval(frameWatch); }
+},400);
+setTimeout(()=>{ clearInterval(frameWatch); if(!__firstFrame) statusEl.textContent='桌面数据等待中…若超 15 秒请检查目标主机'; },15000);
+
+client.onerror=function(st){
+  const d=document.createElement('div');d.className='msg';
+  const reasons={513:'凭据或协议协商失败（请检查资产托管的账号密码）',514:'连接被目标拒绝',515:'网络不可达',516:'连接超时',519:'RDP 服务无响应',
+    769:'Windows 登录失败：托管的账号或密码不正确（请在资产管理中更新凭据）'};
+  d.innerHTML=`RDP 连接失败（${st.code}）<br><span style="font-size:12px;color:#6c7086">${reasons[st.code]||st.message||''}</span>`;
+  dispEl.appendChild(d);
+  document.getElementById('info').textContent='RDP 已断开';
+};
+
+// 键鼠
+const mouse=new Guacamole.Mouse(display.getElement());
+mouse.onmousedown=mouse.onmouseup=mouse.onmousemove=function(ms){client.sendMouseState(ms,true)};
+const keyboard=new Guacamole.Keyboard(document);
+keyboard.onkeydown=function(k){client.sendKeyEvent(1,k)};
+keyboard.onkeyup=function(k){client.sendKeyEvent(0,k)};
+
+// 触屏点击聚焦键盘
+display.getElement().addEventListener('mousedown',()=>display.getElement().focus());
+
+client.connect();  // 桥已注入 connect 参数，前端无参连接
+
+// ===== 分辨率切换：换新 token（内嵌新尺寸）重开本页 =====
+window.changeRes=function(){
+  const v=document.getElementById('res-sel').value;
+  const [w,h]=v==='0x0'
+    ? [screen.availWidth||screen.width, screen.availHeight||screen.height]
+    : v.split('x').map(Number);
+  // 主窗口代申请新 token（带新分辨率），本窗重定向
+  try{
+    if(window.opener && !window.opener.closed){
+      window.opener.postMessage({type:'nb-rdp-resize',width:w,height:h,ret:'rdp'},'*');
+      document.getElementById('info').textContent='正在切换 '+w+'×'+h+' …';
+      // 主窗回传新 token
+      window.addEventListener('message',function(ev){
+        const d=ev.data||{};
+        if(d.type==='nb-rdp-newtoken' && d.token){
+          window.__gotTok=true;
+          location.href='/rdp.html?token='+encodeURIComponent(d.token)+'&user='+encodeURIComponent(USER)+'&res='+w+'x'+h;
+        }
+      });
+      setTimeout(()=>{ if(!window.__gotTok) document.getElementById('info').textContent='切换超时，请重开 RDP'; },15000);
+      return;
+    }
+  }catch(e){}
+  document.getElementById('info').textContent='无法切换（主窗口已关闭），请从堡垒机重新打开';
+};
+
+function goFullscreen(){
+  const el=document.getElementById('display');
+  if(!document.fullscreenElement){
+    const p=el.requestFullscreen&&el.requestFullscreen();
+    if(p&&p.then)p.then(()=>setTimeout(ensureAttached,120));
+  } else document.exitFullscreen();
+}
+document.addEventListener('fullscreenchange',()=>setTimeout(ensureAttached,150));
+</script>
+</body>
+</html>

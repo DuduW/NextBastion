@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NextBastion SSH Terminal</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#1e1e2e;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  .bar{background:#11111b;padding:8px 16px;display:flex;align-items:center;gap:12px;font-size:12px;color:#a6adc8;font-family:"Noto Sans SC",sans-serif;flex:none}
+  .rec{color:#f38ba8;font-weight:600}.rec::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#f38ba8;margin-right:6px;animation:blink 1.2s infinite}
+  @keyframes blink{50%{opacity:.2}}
+  .btn-x{margin-left:auto;background:#f38ba8;color:#111;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-family:inherit}
+  #term-wrap{flex:1;padding:6px;min-height:0}
+</style>
+</head>
+<body>
+<div class="bar"><span id="info">连接中...</span><span class="rec">REC</span><button class="btn-x" onclick="window.close()">断开</button></div>
+<div id="term-wrap"></div>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/xterm-addon-fit.js"></script>
+<script>
+const qs=new URLSearchParams(location.search);
+const TOKEN=qs.get('token'),ASSET=qs.get('asset'),ACCOUNT=qs.get('account'),USER=qs.get('user')||'';
+const term=new Terminal({
+  cursorBlink:true, fontSize:14, fontFamily:'"JetBrains Mono","Cascadia Code",Consolas,"Noto Sans SC",monospace',
+  theme:{background:'#1e1e2e',foreground:'#cdd6f4',cursor:'#f5e0dc',
+         selectionBackground:'#45475a'},
+  allowProposedApi:true, convertEol:false, scrollback:5000
+});
+const fit=new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term-wrap'));
+fit.fit();
+document.getElementById('info').textContent='SSH 会话 · '+(USER||'-');
+term.write('\x1b[90m正在建立 SSH 会话...\x1b[0m\r\n');
+
+const proto=location.protocol==='https:'?'wss':'ws';
+let ws;
+try{
+  ws=new WebSocket(`${proto}://${location.host}/ws/terminal/${ASSET}/${ACCOUNT}?token=${encodeURIComponent(TOKEN)}`);
+}catch(e){ term.write('\r\n\x1b[31m连接创建失败: '+e.message+'\x1b[0m\r\n'); }
+
+// 尺寸同步：把 xterm 实际 cols/rows 告知服务端（PTY 动态 resize，消除回显错位）
+let rzTimer=null;
+function sendResize(){
+  if(ws&&ws.readyState===1){
+    clearTimeout(rzTimer);
+    rzTimer=setTimeout(()=>ws.send(JSON.stringify({__nb:'resize',cols:term.cols,rows:term.rows})),60);
+  }
+}
+
+ws.onopen=()=>{ term.write('\x1b[90m通道已打开...\x1b[0m\r\n'); sendResize(); };
+ws.onmessage=e=>{
+  // 忽略服务端控制帧（如有）
+  term.write(e.data);
+};
+ws.onclose=e=>{
+  const why=e.code===4401?'认证失败(token 无效)':e.code===4403?'五维授权未通过':e.code===4404?'资产或账号不存在':e.code===4500?'托管凭据解密失败':'会话结束';
+  term.write(`\r\n\x1b[90m[已断开 · ${why} · code=${e.code}]\x1b[0m\r\n`);
+};
+ws.onerror=()=>term.write('\r\n\x1b[31m[连接错误]\x1b[0m\r\n');
+
+// xterm → WS：真实终端键序直通（含 Ctrl/Tab/方向键/退格/回车）
+term.onData(data=>{ if(ws.readyState===1) ws.send(data); });
+
+// 窗口/容器尺寸变化：重适配 + 通知服务端
+window.addEventListener('resize',()=>{fit.fit();sendResize()});
+if(window.ResizeObserver){new ResizeObserver(()=>{fit.fit();sendResize()}).observe(document.getElementById('term-wrap'))}
+</script>
+</body>
+</html>

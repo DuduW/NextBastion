@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NextBastion 实时监视</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#1e1e2e;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  .bar{background:#11111b;padding:8px 16px;display:flex;align-items:center;gap:12px;font-size:12px;color:#a6adc8;font-family:"Noto Sans SC",sans-serif}
+  .live{color:#f38ba8;font-weight:600}.live::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#f38ba8;margin-right:6px;animation:blink 1.2s infinite}
+  @keyframes blink{50%{opacity:.2}}
+  #term-wrap{flex:1;padding:6px;min-height:0}
+</style>
+</head>
+<body>
+<div class="bar"><span id="info">连接监视流...</span><span class="live">LIVE 监视</span><button style="margin-left:auto;background:#45475a;color:#cdd6f4;border:none;border-radius:6px;padding:4px 12px;cursor:pointer" onclick="window.close()">关闭</button></div>
+<div id="term-wrap"></div>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/xterm-addon-fit.js"></script>
+<script>
+const qs=new URLSearchParams(location.search);
+const TOKEN=qs.get('token'),SID=qs.get('sid');
+const term=new Terminal({cursorBlink:false,fontSize:13,fontFamily:'"JetBrains Mono",Consolas,monospace',
+  theme:{background:'#1e1e2e',foreground:'#cdd6f4'},scrollback:3000,disableStdin:true});
+const fit=new FitAddon.FitAddon();term.loadAddon(fit);
+term.open(document.getElementById('term-wrap'));fit.fit();
+window.addEventListener('resize',()=>fit.fit());
+document.getElementById('info').textContent='监视会话 '+SID;
+
+const proto=location.protocol==='https:'?'wss':'ws';
+const ws=new WebSocket(`${proto}://${location.host}/ws/live/${SID}?token=${encodeURIComponent(TOKEN)}`);
+ws.onmessage=e=>{
+  try{
+    const m=JSON.parse(e.data);
+    if(m.type==='cast'){
+      // cast 行格式 [time,"o","text"] —— 提取 text 渲染
+      m.data.split('\n').forEach(line=>{
+        if(!line.trim())return;
+        try{
+          const ev=JSON.parse(line);
+          if(Array.isArray(ev)&&ev[1]==='o')term.write(ev[2]);
+        }catch(err){/* 半行忽略 */}
+      });
+    }else if(m.type==='nb-end'){
+      term.write('\r\n\x1b[90m[会话已结束]\x1b[0m\r\n');
+      ws.close();
+    }else if(m.type==='nb-error'){
+      term.write('\r\n\x1b[31m['+m.message+']\x1b[0m\r\n');
+    }
+  }catch(err){}
+};
+ws.onclose=()=>term.write('\r\n\x1b[90m[监视已断开]\x1b[0m\r\n');
+</script>
+</body>
+</html>
