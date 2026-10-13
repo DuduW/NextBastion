@@ -14,8 +14,8 @@
   .wm-layer span{position:absolute;font-size:30px;font-weight:700;letter-spacing:3px;
     color:rgba(255,255,255,.10);transform:rotate(-24deg);white-space:nowrap;
     font-family:"Noto Sans SC",sans-serif;text-shadow:0 1px 3px rgba(0,0,0,.35)}
-  /* guac 库对内层 div/canvas 写内联尺寸——用 transform 整体缩放适配视口（对内联样式免疫） */
-  #disp-wrap>div{position:absolute!important;left:50%!important;top:50%!important;transform-origin:center center!important}
+  /* guac 库对内层 div/canvas 写内联尺寸——用 transform 整体缩放适配视口（对内联样式免疫；排除水印层） */
+  #disp-wrap>div:not(.wm-layer){position:absolute!important;left:50%!important;top:50%!important;transform-origin:center center!important}
   .ctrl{background:#181825;padding:12px 16px;display:flex;align-items:center;gap:12px}
   button{background:#45475a;color:#cdd6f4;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px}
   button:hover{background:#585b70}
@@ -89,7 +89,9 @@ const fmt=s=>{s=Math.max(0,Math.floor(s));return String(Math.floor(s/60)).padSta
 function bindRecording(rec){
   const d=rec.getDisplay();
   const w=document.getElementById('disp-wrap');
+  const wm=document.getElementById('wm');   // 先取水印层
   w.innerHTML=''; w.appendChild(d.getElement());
+  if(wm) w.appendChild(wm);                 // 清空后把水印层挂回（保持最上层，不被销毁）
   rec.onseek=()=>refreshUI(rec);
   rec.onplay=()=>{document.getElementById('btn-play').textContent='⏸ 暂停'};
   rec.onpause=()=>{document.getElementById('btn-play').textContent='▶ 播放'};
