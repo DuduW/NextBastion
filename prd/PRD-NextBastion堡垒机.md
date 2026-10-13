@@ -3,11 +3,11 @@
 | 项目 | 内容 |
 |------|------|
 | 产品名 | NextBastion（内部代号） |
-| 版本 | PRD v2.0（V1.0 已上线生产环境，本版更新实现状态 + RBAC 角色体系 + RDP 图形流落地 + V1.1 路线规划） |
+| 版本 | PRD v2.0（V1.0 已上线 192.168.110.114，本版更新实现状态 + RBAC 角色体系 + RDP 图形流落地 + V1.1 路线规划） |
 | 日期 | 2026-10-12 |
 | 技术栈 | Python 3.11 + FastAPI + MySQL 8.0 + HTML5 SPA + asyncssh + xterm.js 5.5 + guacd 1.5.5（RDP）+ guacamole-common-js 1.5.0 + Nginx |
 | 作者 | Double（产品）· Qi（交付总监） |
-| 状态 | **V1.0 已部署**（生产环境，29+49+11+8 项自动化测试全绿） |
+| 状态 | **V1.0 已部署**（192.168.110.114，29+49+11+8 项自动化测试全绿） |
 
 ---
 
@@ -379,8 +379,8 @@ UI 规范（强制）：浅灰 `#f5f5f7` 背景 + 白卡片 + 14~16px 大圆角 
 
 ## 12. V1.0 实现状态（2026-10-12 已上线）
 
-**部署**：Rocky Linux 9.6 / Python 3.11.13 / MySQL 8 / Nginx / guacd 1.5.5
-**入口**：http://<服务器IP>（admin / 初始密码 + TOTP）
+**部署**：192.168.110.114（Rocky Linux 9.6 / Python 3.11.13 / MySQL 8 / Nginx / guacd 1.5.5）
+**入口**：http://192.168.110.114（admin / Admin@2026 + TOTP）
 
 ### 12.1 功能交付清单
 
@@ -428,6 +428,7 @@ UI 规范（强制）：浅灰 `#f5f5f7` 背景 + 白卡片 + 14~16px 大圆角 
 | 4 | 资产表单 | **操作系统下拉化**：select+optgroup（Linux/Windows/网络设备）+「✏️ 其他（手动输入）」兜底；编辑旧资产时非预置值（如 win11）自动落"其他"并回填，**旧数据无损** | ✅ |
 | 5 | 字段字典 | **资产字段选项全部落库**：新表 `field_options`（field_key=os_type/label，opt_value，opt_group，sort_no，uk 唯一键）；GET `/assets/field-options`（表单动态构建下拉/datalist）+ POST `/settings/field-options`（admin 增删+审计日志）；系统设置页新增「🗂 资产字段选项」管理卡片（chips 展示/➕添加/✕删除，**即时生效无需重启**）；接口异常时前端回退内置清单 | ✅ 全链路验证（UI 添加→表单可见→UI 删除→同步清除） |
 | 6 | 审计中心 | **日志分页**：会话审计/命令审计两页改为服务端分页，**每页 20/50/100 条可选、默认 20**；`/sessions`、`/commands` 加 page/page_size 参数（page_size 20~200，默认 20），返回 {rows,total,page,pages,page_size}；前端通用分页条（共 N 条·第 x/y 页 + 每页条数下拉（20/50/100）+ «‹ 页码 ›»，当前页高亮，切换条数自动回第 1 页，单页时仍可切条数）；替代原 LIMIT 200 截断 | ✅ API 直测（两页无重叠、越界页空）+ 真浏览器验证（默认 20 ✓ 切 100→100 行/2 页 ✓ 切 50→50 行/3 页 ✓ 命令页默认 20 ✓） |
+| 7 | 发布 | **v1.0.3 开源发布**：源码脱敏（去除内网 IP/真实口令默认值，settings 页访问地址改为动态 location.origin）后推送 GitHub（DuduW/NextBastion，含 .gitattributes 强制 LF）；deploy.sh 升级（nginx WS map 修正、NB_WITH_RDP=1 可选编译 guacd 1.5.5、.db.env 密钥文件 + nb-ldap-sync/nb-cleanup systemd 定时器自动安装、默认口令全部中性化）；新增公开版 README（安装/使用/API/安全须知）；一键部署压缩包 NextBastion-v1.0.3.tar.gz（git archive 生成，纯 LF）；4 个脱敏文件已同步回生产服务器并验证 | ✅ health 200 + settings 动态地址真浏览器验证 |
 
 #### 当日修复的 Bug
 

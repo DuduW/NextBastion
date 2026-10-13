@@ -564,7 +564,7 @@ async sessions(){
     <td>${protoBadge(s.protocol)}</td><td>${esc(s.started_at)}</td><td>${s.duration_s}s</td>
     <td>${s.cmd_count>0?s.cmd_count:'-'}</td>
     <td>${s.is_high_risk?badge('高危','red'):badge('正常','green')}</td>
-    <td><button class="btn btn-sm btn-ghost" onclick="viewCast('${s.id}','${s.protocol}')">录像</button></td></tr>`).join('');
+    <td><button class="btn btn-sm btn-ghost" onclick="viewCast('${s.id}','${s.protocol}','${esc(s.username)}')">录像</button></td></tr>`).join('');
   return `<div class="page-head"><div><h2>会话审计</h2><div class="sub">历史会话（SSH=cast 录像 · RDP=图形录像）</div></div>
     <button class="btn btn-ghost" onclick="location.href=API+'/export/sessions'">📥 导出 CSV</button></div>
   <div class="card">${rows.length?`<table><thead><tr><th>会话 ID</th><th>用户</th><th>资产</th><th>协议</th><th>开始</th><th>时长</th><th>命令数</th><th>风险</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无历史会话</div>'}${pagerHtml('sess',d)}</div>`;
@@ -1280,10 +1280,10 @@ async function rdpConnect(assetId){
 async function killSess(sid){
   try{await api(`/sessions/${sid}/kill`,{method:'POST'});toast('会话已断开：'+sid);loadPage()}catch(e){toast('失败：'+e.message)}
 }
-async function viewCast(sid, protocol){
-  // SSH=cast 播放器；RDP=SessionRecording 回放器
+async function viewCast(sid, protocol, user){
+  // SSH=cast 播放器；RDP=SessionRecording 回放器（带使用人水印）
   const page = protocol==='rdp' ? 'rdp-player.html' : 'player.html';
-  window.open(`/${page}?token=${TOKEN}&sid=${sid}`,'_blank','width=1080,height=720');
+  window.open(`/${page}?token=${TOKEN}&sid=${sid}&user=${encodeURIComponent(user||'')}`,'_blank','width=1080,height=720');
 }
 
 // RDP 分辨率切换：子窗请求 → 申请新 token 回传
