@@ -63,6 +63,13 @@ def require_role(*roles):
     return dep
 
 def client_ip(request: Request) -> str:
+    # 优先取 nginx 透传的真实客户端 IP（X-Real-IP），回退直连地址
+    xr = request.headers.get('X-Real-IP', '').strip()
+    if xr:
+        return xr
+    xff = request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+    if xff:
+        return xff
     return request.client.host if request.client else 'unknown'
 
 def write_login_log(username, ip, result, reason=''):
@@ -87,6 +94,19 @@ async def login(request: Request):
     body = await request.json()
     username, password, totp = body.get('username'), body.get('password'), body.get('totp', '')
     ip = client_ip(request)
+    # IM-04: IP 级限流——近 10 分钟同 IP 真实失败 >20 次 → 拒绝（防跨账号喷洒；被拒请求不计数避免封禁续期）
+    try:
+        _ipf = utils.query(
+            "SELECT COUNT(*) c FROM login_logs WHERE client_ip=%s AND result='fail' "
+            "AND reason<>'ip throttled' AND logged_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)",
+            (ip,), one=True)
+        if _ipf and _ipf['c'] > 20:
+            write_login_log(username or '-', ip, 'fail', 'ip throttled')
+            raise HTTPException(423, "该 IP 登录失败次数过多，请 10 分钟后再试")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # 限流查询异常不阻断登录主流程
     u = utils.query("SELECT * FROM users WHERE username=%s", (username,), one=True)
 
     # ---------- 第一因子：本地密码 或 LDAP 目录 ----------
@@ -151,18 +171,19 @@ async def login(request: Request):
             utils.execute("UPDATE users SET fail_count=fail_count+1 WHERE id=%s", (u['id'],))
             write_login_log(username, ip, 'fail', 'bad totp')
             raise HTTPException(401, "动态口令错误")
-        # I1：TOTP 防重放——同时间片二次使用拒绝
-        used = utils.query("SELECT detail FROM audit_logs WHERE actor=%s AND action='totp_used' ORDER BY id DESC LIMIT 1", (username,), one=True)
-        try:
-            last_ts = int(json.loads(used['detail'])['ts']) if used else 0
-        except Exception:
-            last_ts = 0
+        # I1：TOTP 防重放——同时间片二次使用拒绝（IM-06: 独立表，不依赖 audit_logs）
+        used = utils.query("SELECT ts_slot FROM totp_used_logs WHERE uid=%s ORDER BY id DESC LIMIT 1", (u['id'],), one=True)
+        last_ts = used['ts_slot'] if used else 0
         now_ts = int(time.time()) // 30
         if now_ts == last_ts:
             write_login_log(username, ip, 'fail', 'totp replay')
             raise HTTPException(401, "动态口令已使用，请等待下一码")
-        utils.execute("INSERT INTO audit_logs (actor, action, detail) VALUES (%s,'totp_used',%s)",
-                      (username, json.dumps({"ts": now_ts})))
+        try:
+            utils.execute("INSERT INTO totp_used_logs (uid, ts_slot) VALUES (%s,%s)", (u['id'], now_ts))
+        except Exception:
+            # 并发同窗口竞态（uk 冲突）：视为重放，拒绝
+            write_login_log(username, ip, 'fail', 'totp replay')
+            raise HTTPException(401, "动态口令已使用，请等待下一码")
     utils.execute("UPDATE users SET fail_count=0, locked_until=NULL WHERE id=%s", (u['id'],))
     write_login_log(username, ip, 'success')
     return utils.ok({
@@ -193,6 +214,31 @@ async def me(payload=Depends(auth)):
 # ============================================================
 # 2. 用户管理
 # ============================================================
+# IM-03: 密码强度策略
+WEAK_PASSWORDS = {
+    'password', 'password1', '12345678', '123456789', '1234567890',
+    'qwertyuiop', 'abcdefghij', 'aaaaaaaaaa', 'changeme@2026', 'selfhost@2026',
+    'letmein123', 'admin123456', 'p@ssw0rd12', '1qaz2wsx3e',
+}
+
+def password_policy_error(pw: str) -> Optional[str]:
+    """返回 None=通过；否则返回错误消息。规则：≥10 位 + 大写/小写/数字/符号至少三类 + 非常见弱口令"""
+    if not pw or not isinstance(pw, str):
+        return "必须设置初始密码"
+    if len(pw) < 10:
+        return "密码长度至少 10 位"
+    if pw.lower() in WEAK_PASSWORDS:
+        return "密码过于常见，请更换"
+    kinds = sum([
+        any(c.isupper() for c in pw),
+        any(c.islower() for c in pw),
+        any(c.isdigit() for c in pw),
+        any(not c.isalnum() for c in pw),
+    ])
+    if kinds < 3:
+        return "密码需至少包含大写/小写/数字/符号中的三类"
+    return None
+
 @app.get("/api/v1/users")
 async def list_users(p=Depends(require_role('admin'))):
     rows = utils.query("""SELECT u.id, u.username, u.display_name, u.role, u.is_mfa_enabled, u.is_active,
@@ -207,10 +253,14 @@ async def create_user(request: Request, p=Depends(require_role('admin'))):
     b = await request.json()
     if utils.query("SELECT id FROM users WHERE username=%s", (b['username'],), one=True):
         raise HTTPException(409, f"用户名 {b['username']} 已存在")
+    # IM-03: 密码必填 + 强度校验（不再使用任何默认口令）
+    pw_err = password_policy_error(b.get('password'))
+    if pw_err:
+        raise HTTPException(400, pw_err)
     secret = pyotp.random_base32()
     uid = utils.execute(
         "INSERT INTO users (username, password_hash, totp_secret, display_name, role, is_mfa_enabled) VALUES (%s,%s,%s,%s,%s,%s)",
-        (b['username'], utils.hash_password(b.get('password', 'ChangeMe@2026')), secret,
+        (b['username'], utils.hash_password(b['password']), secret,
          b.get('display_name', ''), b.get('role', 'user'), 1))
     for gid in b.get('groups', []):
         utils.execute("INSERT IGNORE INTO user_group_map (user_id, group_id) VALUES (%s,%s)", (uid, gid))
@@ -284,6 +334,10 @@ async def update_user(uid: int, request: Request, p=Depends(require_role('admin'
         1 if b.get('is_active', row['is_active']) else 0,
     ]
     if b.get('password'):
+        # IM-03: 修改密码同样走强度校验
+        pw_err = password_policy_error(b['password'])
+        if pw_err:
+            raise HTTPException(400, pw_err)
         sets.append("password_hash=%s"); args.append(utils.hash_password(b['password']))
     if b.get('reset_totp'):
         new_secret = pyotp.random_base32()
@@ -378,6 +432,18 @@ async def list_assets(request: Request, p=Depends(auth)):
              a.labels
              FROM assets a LEFT JOIN asset_nodes n ON a.node_id=n.id WHERE 1=1"""
     args = []
+    # IM-02: 普通用户仅可见授权资产（与 /my/assets 同款授权过滤），admin/auditor 全量
+    if p['role'] not in ('admin', 'auditor'):
+        user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
+        gids = user_group_ids(user['id'])
+        conds = "(p.user_or_group_type='user' AND p.user_or_group_id=%s)"
+        args.append(user['id'])
+        if gids:
+            conds += f" OR (p.user_or_group_type='group' AND p.user_or_group_id IN ({','.join(['%s']*len(gids))}))"
+            args += gids
+        sql += f""" AND EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
+                    AND ((p.asset_or_node_type='asset' AND p.asset_or_node_id=a.id)
+                      OR (p.asset_or_node_type='node' AND p.asset_or_node_id=a.node_id)))"""
     if q:
         # 搜索同时匹配：主机名 / IP / 分组（labels JSON 数组文本）
         sql += " AND (a.hostname LIKE %s OR a.ip LIKE %s OR a.labels LIKE %s)"
@@ -445,6 +511,11 @@ async def delete_asset(aid: int, p=Depends(require_role('admin'))):
 
 @app.get("/api/v1/assets/{aid}/accounts")
 async def asset_accounts(aid: int, p=Depends(auth)):
+    # IM-02: 账号清单仅对授权用户/角色开放（admin/auditor 或命中授权策略）
+    if p['role'] not in ('admin', 'auditor'):
+        user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
+        if not user or not check_access(user, aid, '*'):
+            raise HTTPException(403, "无授权访问该资产")
     rows = utils.query("SELECT id, asset_id, username, cred_type, status FROM asset_accounts WHERE asset_id=%s", (aid,))
     return utils.ok(rows)
 
@@ -1156,6 +1227,11 @@ def _probe_throttled(aid: int, window: int = 60) -> bool:
 
 @app.post("/api/v1/assets/{aid}/probe")
 async def probe_asset(aid: int, p=Depends(auth)):
+    # IM-02: 探测仅对授权用户/角色开放（admin/auditor 或命中授权策略）
+    if p['role'] not in ('admin', 'auditor'):
+        user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
+        if not user or not check_access(user, aid, '*'):
+            raise HTTPException(403, "无授权探测该资产")
     # I5：60 秒内同资产只探测一次（文件时钟，跨 worker 生效）
     if _probe_throttled(aid):
         row = utils.query("SELECT ip, status FROM assets WHERE id=%s", (aid,), one=True)

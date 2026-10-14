@@ -168,6 +168,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+-- IM-06: TOTP 防重放独立表（不再寄生 audit_logs，避免审计清理/损坏导致重放检测失效）
+CREATE TABLE IF NOT EXISTS totp_used_logs (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  uid BIGINT NOT NULL,
+  ts_slot BIGINT NOT NULL,
+  used_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_uid_slot (uid, ts_slot)
+) ENGINE=InnoDB;
+
 -- ============ 种子数据 ============
 -- 资产字段选项字典
 INSERT IGNORE INTO field_options (field_key, opt_value, opt_group, sort_no) VALUES
