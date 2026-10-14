@@ -191,7 +191,13 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
                 rdp_cfg = {}
     # 剪贴板/磁盘映射：默认禁用（安全默认），策略显式开启才放行
     no_clip = "false" if rdp_cfg.get("clipboard") is True else "true"
-    no_drive = "false" if rdp_cfg.get("drive") is True else "true"
+    drive_on = rdp_cfg.get("drive") is True
+    # 磁盘映射目录：每用户独立（/opt/nextbastion/drives/<用户名>/），自动创建
+    drive_dir = ""
+    if drive_on:
+        _duser = re.sub(r"[^\w.-]", "_", (user.get("username") or "unknown"))
+        drive_dir = f"/opt/nextbastion/drives/{_duser}"
+        os.makedirs(drive_dir, exist_ok=True)
 
     # 会话分辨率：token 内嵌的用户真实屏幕尺寸（无则 1280x720）
     ses_w = str(info.get("sw") or 1280)
@@ -212,10 +218,14 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
         "recording-path": rec_dir,
         "recording-name": f"{sid}.mkb",
         "create-recording-path": "true",
-        # ---- RDP 会话策略（P0-2）----
+        # ---- RDP 会话策略（P0-2；磁盘映射=guacd 文件传输通道，默认禁用）----
         "disable-copy": no_clip, "disable-paste": no_clip,
-        "enable-drive": "false" if rdp_cfg.get("drive") is False else "",
-        "disable-download": "true", "disable-upload": "true",
+        "enable-drive": "true" if drive_on else "false",
+        "drive-name": "NB-" + (re.sub(r"[^\w-]", "", (user.get("username") or "user")) or "user")[:12],
+        "drive-path": drive_dir,
+        "create-drive-path": "true" if drive_on else "",
+        "disable-download": "false" if drive_on else "true",
+        "disable-upload": "false" if drive_on else "true",
     }
     # 参数名列表
     arg_names = [n for n in args_instr[1:] if n]
