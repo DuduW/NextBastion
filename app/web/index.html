@@ -321,7 +321,7 @@ async myassets(){
     <td>${protoBadge(a.protocol)}</td><td>${esc(a.node_name)}</td>
     <td>${a.protocol==='rdp'
       ?`<button class="btn btn-sm btn-ghost" onclick="rdpConnect(${a.id})">RDP</button>`
-      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id})">连 接</button> <button class="btn btn-sm btn-ghost" onclick="fileConnect(${a.id})">📁 文件</button>`}</td></tr>`).join('');
+      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id})">连 接</button>`}</td></tr>`).join('');
   return `<div class="page-head"><div><h2>我的资产</h2><div class="sub">五维授权过滤后的可见资产</div></div></div>
   <div class="card"><div class="search-bar" style="gap:10px;flex-wrap:wrap">
       <input id="my-q" placeholder="🔍 搜索主机名 / IP / 系统 / 分组" style="flex:1;min-width:200px" oninput="myAssetsFilter()">
@@ -1398,12 +1398,6 @@ async function sshConnect(assetId){
   const acc=accs[0];
   const url=`/terminal.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}&user=${encodeURIComponent(USER.username)}`;
   window.open(url,'_blank');
-}
-async function fileConnect(assetId){
-  const accs=await api(`/assets/${assetId}/accounts`);
-  if(!accs.length){toast('该资产未托管账号');return}
-  const acc=accs[0];
-  window.open(`/fileman.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}`,'_blank');
 }
 async function rdpConnect(assetId){
   const accs=await api(`/assets/${assetId}/accounts`);

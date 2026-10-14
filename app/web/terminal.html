@@ -11,11 +11,13 @@
   .rec{color:#f38ba8;font-weight:600}.rec::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#f38ba8;margin-right:6px;animation:blink 1.2s infinite}
   @keyframes blink{50%{opacity:.2}}
   .btn-x{margin-left:auto;background:#f38ba8;color:#111;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-family:inherit}
+  .btn-f{background:#45475a;color:#cdd6f4;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-family:inherit}
+  .btn-f:hover{background:#585b70}
   #term-wrap{flex:1;padding:6px;min-height:0}
 </style>
 </head>
 <body>
-<div class="bar"><span id="info">连接中...</span><span class="rec">REC</span><button class="btn-x" onclick="window.close()">断开</button></div>
+<div class="bar"><span id="info">连接中...</span><span class="rec">REC</span><button class="btn-f" onclick="openFiles()">📁 文件</button><button class="btn-x" onclick="window.close()">断开</button></div>
 <div id="term-wrap"></div>
 <script src="vendor/xterm.js"></script>
 <script src="vendor/xterm-addon-fit.js"></script>
@@ -67,6 +69,11 @@ term.onData(data=>{ if(ws.readyState===1) ws.send(data); });
 // 窗口/容器尺寸变化：重适配 + 通知服务端
 window.addEventListener('resize',()=>{fit.fit();sendResize()});
 if(window.ResizeObserver){new ResizeObserver(()=>{fit.fit();sendResize()}).observe(document.getElementById('term-wrap'))}
+
+// F4: 打开同资产同账号的文件管理（新标签页）
+function openFiles(){
+  window.open(`/fileman.html?token=${encodeURIComponent(TOKEN)}&asset=${ASSET}&account=${ACCOUNT}`,'_blank');
+}
 </script>
 </body>
 </html>
