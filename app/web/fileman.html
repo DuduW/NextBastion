@@ -116,8 +116,25 @@ function fmtSize(n){if(n==null)return '-';if(n<1024)return n+'B';const u=['KB','
 function fmtTime(t){const d=new Date(t*1000);return d.toLocaleDateString('zh-CN')+' '+d.toTimeString().slice(0,5)}
 function goHome(){location.href='/index.html'}
 
-// ===== 会话建立 =====
-api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST'}).then(async d=>{
+// ===== 会话建立（支持临时凭据：account=0 时需先弹窗收集账密换 ticket） =====
+let CT=qs.get('ct')||'';
+async function startSession(){
+  let ct=CT;
+  if(ACCOUNT_ID===0 && !ct){
+    // 无托管账号且无凭据：弹窗收集
+    const login=prompt('该资产未托管账号——请输入 SSH 登录账号：');
+    if(!login)return false;
+    const pass=prompt('请输入密码（仅本次使用，不保存）：');
+    if(!pass)return false;
+    try{
+      const r=await api('/temp-cred',{method:'POST',body:JSON.stringify({asset_id:ASSET_ID,login,password:pass})});
+      ct=CT=r.ticket;
+    }catch(e){
+      document.getElementById('rows').innerHTML=`<tr><td colspan="6" class="empty" style="color:var(--err)">❌ ${esc(e.message)}</td></tr>`;
+      return false;
+    }
+  }
+  const d=await api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST',body:JSON.stringify(ct?{ct}:{})});
   FSID=d.fsid;CONNECTED=true;
   document.getElementById('asset-info').textContent=`${d.hostname} · ${d.ip}`;
   const dot=document.getElementById('conn-dot');
@@ -129,7 +146,9 @@ api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST'}).then(async d=>{
   ls(home);
   renderTree();
   setInterval(()=>{ if(!CONNECTED)return; api(`/files/${FSID}/list?path=${encodeURIComponent(CWD)}`).catch(()=>{}); },300000); // 保活
-}).catch(e=>{
+  return true;
+}
+startSession().catch(e=>{
   document.getElementById('rows').innerHTML=`<tr><td colspan="6" class="empty" style="color:var(--err)">❌ ${esc(e.message)}</td></tr>`;
   document.getElementById('asset-info').textContent='连接失败';
   const dot=document.getElementById('conn-dot');

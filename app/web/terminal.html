@@ -70,9 +70,10 @@ term.onData(data=>{ if(ws.readyState===1) ws.send(data); });
 window.addEventListener('resize',()=>{fit.fit();sendResize()});
 if(window.ResizeObserver){new ResizeObserver(()=>{fit.fit();sendResize()}).observe(document.getElementById('term-wrap'))}
 
-// F4: 打开同资产同账号的文件管理（新标签页）
+// F4: 打开同资产同账号的文件管理（新标签页；临时凭据会话传 ct）
 function openFiles(){
-  window.open(`/fileman.html?token=${encodeURIComponent(TOKEN)}&asset=${ASSET}&account=${ACCOUNT}`,'_blank');
+  const ct=qs.get('ct');
+  window.open(`/fileman.html?token=${encodeURIComponent(TOKEN)}&asset=${ASSET}&account=${ACCOUNT}${ct?'&ct='+encodeURIComponent(ct):''}`,'_blank');
 }
 </script>
 </body>

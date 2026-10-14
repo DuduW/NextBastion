@@ -802,12 +802,20 @@ async def my_assets(payload=Depends(auth)):
     if gids:
         conds += f" OR (p.user_or_group_type='group' AND p.user_or_group_id IN ({','.join(['%s']*len(gids))}))"
         args += gids
+    # 节点继承：资产直接节点或其任意祖先节点上的策略都生效（与 check_access 一致）
     sql = f"""SELECT DISTINCT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.labels, n.name AS node_name
               FROM assets a
               JOIN asset_nodes n ON a.node_id=n.id
               WHERE EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
                             AND ((p.asset_or_node_type='asset' AND p.asset_or_node_id=a.id)
-                              OR (p.asset_or_node_type='node' AND p.asset_or_node_id=a.node_id)))
+                              OR (p.asset_or_node_type='node' AND p.asset_or_node_id IN (
+                                    SELECT n2.id FROM asset_nodes n2
+                                    WHERE n2.id=a.node_id
+                                       OR n2.id IN (WITH RECURSIVE up(id) AS (
+                                             SELECT n1.parent_id FROM asset_nodes n1 WHERE n1.id=a.node_id
+                                             UNION ALL
+                                             SELECT n3.parent_id FROM asset_nodes n3 JOIN up ON n3.id=up.id WHERE n3.parent_id IS NOT NULL)
+                                           SELECT id FROM up)))))
               ORDER BY a.id LIMIT 300"""
     return utils.ok(utils.query(sql, args))
 
@@ -1571,15 +1579,32 @@ async def notify_alert(cmdline, rule, username, hostname):
 import fileman
 
 @app.post("/api/v1/files/{asset_id}/{account_id}/session")
-async def file_session(asset_id: int, account_id: int, p=Depends(auth)):
-    """建立文件管理会话（校验五维授权），返回 fsid"""
+async def file_session(asset_id: int, account_id: int, request: Request = None, p=Depends(auth)):
+    """建立文件管理会话（校验五维授权），返回 fsid；支持临时凭据（account_id=0 + ct ticket）"""
     user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
-    acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
     asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
-    if not (user and acc and asset):
-        raise HTTPException(404, "asset or account not found")
+    if not (user and asset):
+        raise HTTPException(404, "asset not found")
     if asset.get("protocol") not in ("ssh", None):
         raise HTTPException(400, "仅支持 SSH 协议资产")
+    # ---- account_id=0：临时凭据 ----
+    if account_id == 0:
+        ct = (request.query_params.get("ct") if request else "") or ""
+        body = {}
+        try:
+            body = await request.json() if request else {}
+        except Exception:
+            body = {}
+        ct = ct or body.get("ct") or ""
+        entry = _read_temp_ticket(ct, user['id'], asset_id) if ct else None
+        if not entry:
+            raise HTTPException(401, "临时凭据已失效，请重新输入")
+        acc = {"id": 0, "asset_id": asset_id, "username": entry["l"],
+               "secret_encrypted": utils.encrypt_secret(entry["p"]), "status": "active", "cred_type": "temp"}
+    else:
+        acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
+        if not acc:
+            raise HTTPException(404, "account not found")
     try:
         fsid = await fileman.open_session(user, asset, acc)
     except PermissionError as e:
