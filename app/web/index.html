@@ -1398,10 +1398,45 @@ function ldapReset(){
 
 async function sshConnect(assetId){
   const accs=await api(`/assets/${assetId}/accounts`);
-  if(!accs.length){toast('该资产未托管账号（管理员创建资产时可指定）');return}
+  if(!accs.length){
+    // 无托管账号：弹窗让用户自输账密（临时凭据，不落库）
+    tempCredConnect(assetId);
+    return;
+  }
   const acc=accs[0];
   const url=`/terminal.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}&user=${encodeURIComponent(USER.username)}`;
   window.open(url,'_blank');
+}
+async function tempCredConnect(assetId){
+  const html=`<div class="modal-head"><b>🔑 输入登录凭据</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    <div class="m-row"><label>账号（资产上的系统账号）</label><input id="tc-login" class="mono" placeholder="如 root / ubuntu" autocomplete="off"></div>
+    <div class="m-row"><label>密码</label><input id="tc-pass" type="password" placeholder="资产账号密码（仅本次连接使用，不保存）"></div>
+    <div class="hint">该资产未托管账号——凭据仅内存中转 60 秒，连接后立即销毁，全程录像审计。</div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" id="tc-go" onclick="doTempConnect(${assetId})">连 接</button>
+  </div>`;
+  openModal(html);
+  document.getElementById('tc-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doTempConnect(assetId)});
+  setTimeout(()=>document.getElementById('tc-login').focus(),50);
+}
+async function doTempConnect(assetId){
+  const login=document.getElementById('tc-login').value.trim();
+  const pass=document.getElementById('tc-pass').value;
+  if(!login||!pass){toast('请输入账号和密码');return}
+  const btn=document.getElementById('tc-go');
+  btn.disabled=true;btn.textContent='验证中…';
+  try{
+    const r=await api('/temp-cred',{method:'POST',body:JSON.stringify({asset_id:assetId,login,password:pass})});
+    closeModal();
+    const url=`/terminal.html?token=${TOKEN}&asset=${assetId}&account=0&ct=${r.ticket}&user=${encodeURIComponent(USER.username)}`;
+    window.open(url,'_blank');
+  }catch(e){
+    toast('凭据校验未通过：'+e.message);
+    btn.disabled=false;btn.textContent='连 接';
+  }
 }
 async function rdpConnect(assetId){
   const accs=await api(`/assets/${assetId}/accounts`);

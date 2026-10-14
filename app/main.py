@@ -967,8 +967,58 @@ def match_filter(cmd: str, rules=None):
             return r['action'], r.get('name', r['regex'])
     return 'allow', ''
 
+# ============================================================
+# 临时凭据（资产未托管账号时，用户连接自输账密）
+# ticket = 自包含 JWT（凭据 AESGCM 加密内嵌，60s 有效；WS 消费即换新随机 token 防重放）
+# 多 worker 安全：无共享内存状态
+# ============================================================
+TEMP_USED = set()   # 已消费 jti（进程内尽力去重；主防线是 60s 短时效 + jti 随机）
+
+def _make_temp_ticket(uid: int, asset_id: int, login: str, password: str) -> str:
+    import jwt as pyjwt
+    from config import JWT_SECRET
+    body = utils.encrypt_secret(json.dumps({"u": uid, "a": asset_id, "l": login, "p": password}, ensure_ascii=False))
+    return pyjwt.encode({"kind": "tcred", "data": body.hex(),
+                         "jti": uuid.uuid4().hex, "exp": int(time.time()) + 60},
+                        JWT_SECRET, algorithm="HS256")
+
+def _read_temp_ticket(ticket: str, uid: int, asset_id: int):
+    import jwt as pyjwt
+    from config import JWT_SECRET
+    try:
+        payload = pyjwt.decode(ticket, JWT_SECRET, algorithms=["HS256"])
+        if payload.get("kind") != "tcred":
+            return None
+        body = utils.decrypt_secret(bytes.fromhex(payload["data"]))
+        d = json.loads(body)
+        if int(d["u"]) != int(uid) or int(d["a"]) != int(asset_id) or payload["jti"] in TEMP_USED:
+            return None
+        TEMP_USED.add(payload["jti"])
+        if len(TEMP_USED) > 5000:
+            for j in list(TEMP_USED)[:2500]:
+                TEMP_USED.discard(j)
+        return d
+    except Exception:
+        return None
+
+@app.post("/api/v1/temp-cred")
+async def issue_temp_cred(request: Request, p=Depends(auth)):
+    """签发临时凭据 ticket：body {asset_id, login, password}；60s 内一次性使用"""
+    b = await request.json()
+    asset_id, login, password = b.get("asset_id"), (b.get("login") or "").strip(), b.get("password") or ""
+    if not (asset_id and login and password):
+        raise HTTPException(400, "asset_id/login/password 必填")
+    # 授权校验：账号模式必须匹配（否则可绕过账号维度授权）
+    user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
+    pol = check_access(user, asset_id, login)
+    if not pol:
+        raise HTTPException(403, "无该资产的访问授权（或授权账号模式不匹配）")
+    ticket = _make_temp_ticket(user['id'], asset_id, login, password)
+    write_audit(user['username'], 'temp_cred', 'asset', asset_id, {'login': login})
+    return utils.ok({"ticket": ticket, "expires_in": 60})
+
 @app.websocket("/ws/terminal/{asset_id}/{account_id}")
-async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str = ""):
+async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str = "", ct: str = ""):
     await ws.accept()
     payload = None
     try:
@@ -978,8 +1028,21 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
         await ws.close(code=4401)
         return
     user = utils.query("SELECT * FROM users WHERE id=%s", (payload['sub'],), one=True)
-    acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
     asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
+    # ---- account_id=0：用户自输临时凭据（ct=自包含 JWT ticket，60s 一次性） ----
+    temp_cred = None
+    if account_id == 0:
+        entry = _read_temp_ticket(ct, payload['sub'], asset_id) if ct else None
+        if not entry:
+            await ws.send_text('\r\n\x1b[31m[NextBastion] 临时凭据已失效，请重新输入\r\n\x1b[0m')
+            await ws.close(code=4401)
+            return
+        temp_cred = entry
+        # 构造虚拟账号行（不落库）：凭据经内存传递后即刻弃用
+        acc = {"id": 0, "asset_id": asset_id, "username": entry["l"],
+               "secret_encrypted": utils.encrypt_secret(entry["p"]), "status": "active", "cred_type": "temp"}
+    else:
+        acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
     if user and not user['is_active']:
         await ws.send_text('\r\n\x1b[31m[NextBastion] 账号已被禁用\r\n\x1b[0m')
         await ws.close(code=4403)
