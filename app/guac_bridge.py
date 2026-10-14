@@ -215,13 +215,17 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
 
     value_map = {
         "hostname": asset["ip"], "port": str(asset["rdp_port"]),
-        "username": acc["username"], "password": secret,
+        # 域账号拆分：DOMAIN\user → domain=DOMAIN + username=user（FreeRDP NLA 必须分传；
+        # user@domain.test 形式保持整串——UPN 由 FreeRDP 自行处理）
+        "domain": (_dm := (acc["username"].split("\\", 1)[0] if "\\" in acc["username"] else "")),
+        "username": acc["username"].split("\\", 1)[-1] if "\\" in acc["username"] else acc["username"],
+        "password": secret,
         "security": "nla", "ignore-cert": "true", "cert-ignore": "true",
         "resize": "none",
         "color-depth": "24", "dpi": "96",
         "width": ses_w, "height": ses_h,
         "audio": "", "video": "", "image": "image/jpeg",
-        "server-layout": "", "read-only": "", "domain": "",
+        "server-layout": "", "read-only": "",
         "console": "", "initial-program": "", "timezone": "",
         "enable-font-smoothing": "true", "enable-wallpaper": "true",
         # ---- 录像（P0-1；分级目录 用户名/日期）----
