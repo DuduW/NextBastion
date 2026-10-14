@@ -916,10 +916,10 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
     # P0-4：该会话生效的命令过滤规则集（策略绑定优先）
     session_rules = get_filter_rules(pol.get('command_filter_id'))
 
-    # 会话登记 + cast 录像文件
+    # 会话登记 + cast 录像文件（分级目录：<用户名>/<日期>/）
     sid = utils.new_session_id()
-    os.makedirs(RECORD_DIR, exist_ok=True)
-    cast_path = os.path.join(RECORD_DIR, f"{sid}.cast")
+    cast_dir = utils.record_subdir(RECORD_DIR, user['username'])
+    cast_path = os.path.join(cast_dir, f"{sid}.cast")
     cast_f = open(cast_path, 'w', encoding='utf-8')
     cast_f.write(json.dumps({"version": 2, "width": 120, "height": 32,
                              "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"},

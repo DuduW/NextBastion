@@ -100,7 +100,9 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
         return
 
     sid = utils.new_session_id()
-    rec_path = os.path.join(RECORD_DIR, f"{sid}.mkb")
+    # 录像分级目录：<用户名>/<日期>/（guacd recording-path 指向具体日期目录）
+    rec_dir = utils.record_subdir(RECORD_DIR, user["username"])
+    rec_path = os.path.join(rec_dir, f"{sid}.mkb")
 
     # ---- 单会话强制：同一资产+账号只允许一个活动 RDP 会话 ----
     # Windows 不支持并发 RDP 桌面会话（新连接会把旧会话顶掉导致旧画面冻结变黑）。
@@ -201,8 +203,8 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
         "server-layout": "", "read-only": "", "domain": "",
         "console": "", "initial-program": "", "timezone": "",
         "enable-font-smoothing": "true", "enable-wallpaper": "true",
-        # ---- 录像（P0-1）----
-        "recording-path": RECORD_DIR,
+        # ---- 录像（P0-1；分级目录 用户名/日期）----
+        "recording-path": rec_dir,
         "recording-name": f"{sid}.mkb",
         "create-recording-path": "true",
         # ---- RDP 会话策略（P0-2）----

@@ -1,5 +1,5 @@
 """NextBastion - 公共工具：JWT、密码哈希、凭据加解密、DB 连接"""
-import hashlib, hmac, os, json, time, base64
+import hashlib, hmac, os, re, json, time, base64
 from datetime import datetime, timedelta
 import pymysql, jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -29,6 +29,18 @@ def execute(sql, args=None):
             return cur.lastrowid
     finally:
         conn.close()
+
+# ---------- 录像存储 ----------
+def record_subdir(base: str, username: str, ts: float = None) -> str:
+    """录像分级目录：base/<用户名>/<YYYY-MM-DD>/
+    - 用户名做白名单清洗（仅字母数字._-），防路径穿越/特殊字符
+    - 目录不存在自动创建；返回绝对目录路径
+    """
+    safe = re.sub(r'[^\w.-]', '_', (username or 'unknown').strip()) or 'unknown'
+    day = time.strftime('%Y-%m-%d', time.localtime(ts))
+    d = os.path.join(base, safe, day)
+    os.makedirs(d, exist_ok=True)
+    return d
 
 # ---------- 密码 ----------
 def hash_password(pw: str, salt: str = None) -> str:
