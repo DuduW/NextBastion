@@ -1411,9 +1411,10 @@ async function rdpConnect(assetId){
     const d=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
       asset_id:assetId,account_id:accs[0].id,
       screen_width:1024,screen_height:768})});
-    // 记住上下文，供分辨率切换重连
+    // 记住上下文，供分辨率切换重连；clip 标志供 rdp.html 启用剪贴板
     window.__rdpCtx={assetId,accId:accs[0].id};
-    const url=`/rdp.html?token=${encodeURIComponent(d.token)}&user=${encodeURIComponent(USER.username)}`;
+    const clip=(d.rdp_config&&d.rdp_config.clipboard===true)?'#clip=1':'';
+    const url=`/rdp.html?token=${encodeURIComponent(d.token)}&user=${encodeURIComponent(USER.username)}${clip}`;
     window.open(url,'_blank');
   }catch(e){toast('RDP 授权失败：'+e.message)}
 }

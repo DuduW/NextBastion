@@ -148,6 +148,39 @@ const keyboard=new Guacamole.Keyboard(document);
 keyboard.onkeydown=function(k){client.sendKeyEvent(1,k)};
 keyboard.onkeyup=function(k){client.sendKeyEvent(0,k)};
 
+// ===== 剪贴板（策略 clipboard=true 时可用）=====
+// 能力标志由后端在 connect 参数注入 token；这里从 URL hash 读（rdp/tokens API 附加）
+let CLIP_OK=false;
+try{ CLIP_OK = location.hash.includes('clip=1'); }catch(e){}
+(async()=>{
+  if(!navigator.clipboard){ return; }
+  // 远端 → 本地：服务端 clipboard 指令写入系统剪贴板
+  client.onclipboard=function(stream, mimetype){
+    if(!CLIP_OK){ stream.onblob=null; return; }
+    if(!/text\/plain/.test(mimetype)){ return; }
+    const reader=new Guacamole.StringReader(stream);
+    let data='';
+    reader.ontext=function(t){ data+=t };
+    reader.onend=function(){
+      navigator.clipboard.writeText(data).catch(()=>{});
+    };
+  };
+  // 本地 → 远端：页面获焦时读取本地剪贴板推给远端（浏览器安全模型限制：需页面内 Ctrl+C 或可见交互后剪贴板才可读）
+  window.addEventListener('focus',async()=>{
+    if(!CLIP_OK)return;
+    try{
+      const text=await navigator.clipboard.readText();
+      if(text && text!==window.__lastClip){
+        window.__lastClip=text;
+        const stream=client.createClipboardStream('text/plain');
+        const writer=new Guacamole.StringWriter(stream);
+        writer.sendText(text);
+        writer.sendEnd();
+      }
+    }catch(e){ /* 无权限或非用户手势——静默 */ }
+  });
+})();
+
 // 触屏点击聚焦键盘
 display.getElement().addEventListener('mousedown',()=>display.getElement().focus());
 

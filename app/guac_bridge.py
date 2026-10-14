@@ -177,14 +177,18 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
         f.write(repr(args_instr) + "\n")
 
     # 按 guacd 给的参数名顺序填值（guac 官方 rdp 参数）
-    # P0-2：取策略 RDP 会话配置（剪贴板/磁盘映射）
+    # P0-2：取全部命中策略的会话配置并集（剪贴板/磁盘映射——任一策略开启即放行）
     rdp_cfg = {}
     try:
+        from main import merged_session_config
+        rdp_cfg = merged_session_config(user, asset["id"], acc["username"])
+    except Exception:
         pol = check_access(user, asset["id"], acc["username"])
         if pol and pol["rdp_session_config"]:
-            rdp_cfg = json.loads(pol["rdp_session_config"]) or {}
-    except Exception:
-        pass
+            try:
+                rdp_cfg = json.loads(pol["rdp_session_config"]) or {}
+            except Exception:
+                rdp_cfg = {}
     # 剪贴板/磁盘映射：默认禁用（安全默认），策略显式开启才放行
     no_clip = "false" if rdp_cfg.get("clipboard") is True else "true"
     no_drive = "false" if rdp_cfg.get("drive") is True else "true"

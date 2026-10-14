@@ -663,10 +663,21 @@ def user_group_ids(user_id: int):
     return [r['group_id'] for r in rows]
 
 def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
-    """五维授权判定：用户/组 × 资产/节点 × 账号 × 时段。返回命中的策略或 None"""
+    """五维授权判定：用户/组 × 资产/节点（含父节点继承） × 账号 × 时段。返回命中的策略或 None"""
     asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
     if not asset:
         return None
+    # 资产所在节点及其全部祖先（父节点授权对子节点资产生效）
+    node_ids = [asset['node_id']]
+    cur = asset['node_id']
+    seen = set()
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        parent = utils.query("SELECT parent_id FROM asset_nodes WHERE id=%s", (cur,), one=True)
+        if not parent or parent['parent_id'] is None:
+            break
+        cur = parent['parent_id']
+        node_ids.append(cur)
     gids = user_group_ids(user['id'])
     conds_user = "(user_or_group_type='user' AND user_or_group_id=%s)"
     args = [user['id']]
@@ -674,13 +685,14 @@ def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
         conds_user += f" OR (user_or_group_type='group' AND user_or_group_id IN ({','.join(['%s']*len(gids))}))"
         args += gids
     now = datetime.now()
+    ph_nodes = ','.join(['%s'] * len(node_ids))
     sql = f"""SELECT * FROM access_policies WHERE is_enabled=1
         AND ({conds_user})
         AND ((asset_or_node_type='asset' AND asset_or_node_id=%s)
-             OR (asset_or_node_type='node' AND asset_or_node_id=%s))
+             OR (asset_or_node_type='node' AND asset_or_node_id IN ({ph_nodes})))
         AND (valid_until IS NULL OR valid_until > NOW())
         AND (valid_from IS NULL OR valid_from < NOW())"""
-    args += [asset_id, asset['node_id']]
+    args += [asset_id] + node_ids
     for pol in utils.query(sql, args):
         pat = pol['account_pattern'] or '*'
         if pat != '*' and not re.match(f"^{pat.replace('*', '.*')}$", account or ''):
@@ -699,6 +711,71 @@ def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
         if ok_time:
             return pol
     return None
+
+def check_access_all(user: dict, asset_id: int, account: str) -> list:
+    """返回全部命中的启用策略（能力合并用：任一策略开启的能力即生效）"""
+    asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
+    if not asset:
+        return []
+    node_ids = [asset['node_id']]
+    cur = asset['node_id']
+    seen = set()
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        parent = utils.query("SELECT parent_id FROM asset_nodes WHERE id=%s", (cur,), one=True)
+        if not parent or parent['parent_id'] is None:
+            break
+        cur = parent['parent_id']
+        node_ids.append(cur)
+    gids = user_group_ids(user['id'])
+    conds_user = "(user_or_group_type='user' AND user_or_group_id=%s)"
+    args = [user['id']]
+    if gids:
+        conds_user += f" OR (user_or_group_type='group' AND user_or_group_id IN ({','.join(['%s']*len(gids))}))"
+        args += gids
+    now = datetime.now()
+    ph_nodes = ','.join(['%s'] * len(node_ids))
+    sql = f"""SELECT * FROM access_policies WHERE is_enabled=1
+        AND ({conds_user})
+        AND ((asset_or_node_type='asset' AND asset_or_node_id=%s)
+             OR (asset_or_node_type='node' AND asset_or_node_id IN ({ph_nodes})))
+        AND (valid_until IS NULL OR valid_until > NOW())
+        AND (valid_from IS NULL OR valid_from < NOW())"""
+    args += [asset_id] + node_ids
+    out = []
+    for pol in utils.query(sql, args):
+        pat = pol['account_pattern'] or '*'
+        if pat != '*' and not re.match(f"^{pat.replace('*', '.*')}$", account or ''):
+            continue
+        ok_time = True
+        try:
+            periods = json.loads(pol['allowed_periods']) if pol['allowed_periods'] else []
+            if periods:
+                ok_time = any(
+                    (not p.get('dow') or now.weekday() + 1 in p['dow'])
+                    and (not p.get('start') or p['start'] <= now.strftime('%H:%M'))
+                    and (not p.get('end') or now.strftime('%H:%M') <= p['end'])
+                    for p in periods)
+        except Exception:
+            ok_time = True
+        if ok_time:
+            out.append(pol)
+    return out
+
+def merged_session_config(user: dict, asset_id: int, account: str) -> dict:
+    """合并全部命中策略的 rdp_session_config（能力并集：任一开启即开）"""
+    merged = {}
+    for pol in check_access_all(user, asset_id, account):
+        try:
+            cfg = json.loads(pol.get("rdp_session_config") or "{}") or {}
+        except Exception:
+            cfg = {}
+        for k, v in cfg.items():
+            if isinstance(v, bool):
+                merged[k] = merged.get(k, False) or v
+            else:
+                merged.setdefault(k, v)
+    return merged
 
 # ============================================================
 # 5. 我的资产 / 会话 / 审计
@@ -847,11 +924,7 @@ async def rdp_token(request: Request, p=Depends(auth)):
                           "sw": sw, "sh": sh,
                           "exp": int(time.time()) + RDP_TOKEN_TTL},
                          JWT_SECRET, algorithm="HS256")
-    cfg = {}
-    try:
-        cfg = json.loads(pol['rdp_session_config']) if pol['rdp_session_config'] else {}
-    except Exception:
-        pass
+    cfg = merged_session_config(user, asset_id, acc['username'])
     return utils.ok({"token": token, "expires_in": RDP_TOKEN_TTL, "rdp_config": cfg})
 
 @app.websocket("/ws/rdp/{token}")

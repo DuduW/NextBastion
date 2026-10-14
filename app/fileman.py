@@ -25,16 +25,12 @@ def _risk(path: str) -> bool:
 
 
 async def open_session(user: dict, asset: dict, account: dict) -> str:
-    """校验授权（由调用方 check_access 后传入），建 SFTP 连接，返回 fsid"""
-    from main import check_access   # 延迟导入避免环
-    pol = check_access(user, asset["id"], account["username"])
-    if not pol:
+    """校验授权（能力并集），建 SFTP 连接，返回 fsid"""
+    from main import check_access, merged_session_config   # 延迟导入避免环
+    if not check_access(user, asset["id"], account["username"]):
         raise PermissionError("no access policy")
-    # F4-6：文件传输需授权策略显式开启（rdp_session_config 同款承载，键 sftp）
-    try:
-        cfg = json.loads(pol.get("rdp_session_config") or "{}") or {}
-    except Exception:
-        cfg = {}
+    # F4-6：文件传输需任一命中策略显式开启（能力并集）
+    cfg = merged_session_config(user, asset["id"], account["username"])
     if cfg.get("sftp") is not True:
         raise PermissionError("file transfer not granted by policy")
     secret = utils.decrypt_secret(account["secret_encrypted"])
