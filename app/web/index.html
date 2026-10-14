@@ -1424,7 +1424,7 @@ async function tempCredConnect(assetId){
   <div class="modal-body">
     <div class="m-row"><label>账号（资产上的系统账号）</label><input id="tc-login" class="mono" placeholder="如 root / ubuntu" autocomplete="off"></div>
     <div class="m-row"><label>密码</label><input id="tc-pass" type="password" placeholder="资产账号密码（仅本次连接使用，不保存）"></div>
-    <div class="hint">该资产未托管账号——凭据仅内存中转 60 秒，连接后立即销毁，全程录像审计。</div>
+    <div class="hint">该资产未托管账号——凭据仅内存中转（10 分钟内一次性），连接后立即销毁，全程录像审计。</div>
   </div>
   <div class="modal-foot">
     <button class="btn btn-ghost" onclick="closeModal()">取消</button>
@@ -1475,7 +1475,7 @@ async function tempCredRdp(assetId){
   <div class="modal-body">
     <div class="m-row"><label>账号（Windows 账号）</label><input id="tc-login" class="mono" placeholder="如 administrator / domain\\user" autocomplete="off"></div>
     <div class="m-row"><label>密码</label><input id="tc-pass" type="password" placeholder="Windows 账号密码（仅本次连接使用，不保存）"></div>
-    <div class="hint">该资产未托管账号——凭据仅内存中转 60 秒，连接后立即销毁，全程图形录像审计。</div>
+    <div class="hint">该资产未托管账号——凭据仅内存中转（10 分钟内一次性），连接后立即销毁，全程图形录像审计。</div>
   </div>
   <div class="modal-foot">
     <button class="btn btn-ghost" onclick="closeModal()">取消</button>

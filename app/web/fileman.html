@@ -118,23 +118,42 @@ function goHome(){location.href='/index.html'}
 
 // ===== 会话建立（支持临时凭据：account=0 时需先弹窗收集账密换 ticket） =====
 let CT=qs.get('ct')||'';
+async function collectCred(){
+  const login=prompt('该资产未托管账号——请输入 SSH 登录账号：');
+  if(!login)return null;
+  const pass=prompt('请输入密码（仅本次使用，不保存）：');
+  if(!pass)return null;
+  try{
+    const r=await api('/temp-cred',{method:'POST',body:JSON.stringify({asset_id:ASSET_ID,login,password:pass})});
+    return CT=r.ticket;
+  }catch(e){
+    document.getElementById('rows').innerHTML=`<tr><td colspan="6" class="empty" style="color:var(--err)">❌ ${esc(e.message)}</td></tr>`;
+    return null;
+  }
+}
 async function startSession(){
   let ct=CT;
-  if(ACCOUNT_ID===0 && !ct){
-    // 无托管账号且无凭据：弹窗收集
-    const login=prompt('该资产未托管账号——请输入 SSH 登录账号：');
-    if(!login)return false;
-    const pass=prompt('请输入密码（仅本次使用，不保存）：');
-    if(!pass)return false;
+  // account=0 且无有效凭据 → 弹窗收集（终端透传来的 ct 已被消费时同样重新收集）
+  if(ACCOUNT_ID===0){
+    if(!ct) ct=await collectCred();
+    if(!ct)return false;
+    let d;
     try{
-      const r=await api('/temp-cred',{method:'POST',body:JSON.stringify({asset_id:ASSET_ID,login,password:pass})});
-      ct=CT=r.ticket;
+      d=await api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST',body:JSON.stringify({ct})});
     }catch(e){
-      document.getElementById('rows').innerHTML=`<tr><td colspan="6" class="empty" style="color:var(--err)">❌ ${esc(e.message)}</td></tr>`;
-      return false;
+      if(e.message&&e.message.includes('失效')&&CT!==''){   // 透传的旧 ticket 已被终端消费 → 重新收集
+        CT='';
+        ct=await collectCred();
+        if(!ct)return false;
+        d=await api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST',body:JSON.stringify({ct})});
+      } else throw e;
     }
+    return finishSession(d);
   }
   const d=await api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST',body:JSON.stringify(ct?{ct}:{})});
+  return finishSession(d);
+}
+async function finishSession(d){
   FSID=d.fsid;CONNECTED=true;
   document.getElementById('asset-info').textContent=`${d.hostname} · ${d.ip}`;
   const dot=document.getElementById('conn-dot');

@@ -1037,8 +1037,9 @@ def _make_temp_ticket(uid: int, asset_id: int, login: str, password: str) -> str
     import jwt as pyjwt
     from config import JWT_SECRET
     body = utils.encrypt_secret(json.dumps({"u": uid, "a": asset_id, "l": login, "p": password}, ensure_ascii=False))
+    # 10 分钟有效（用户可能需要翻找密码），一次性消费由 jti 去重保证
     return pyjwt.encode({"kind": "tcred", "data": body.hex(),
-                         "jti": uuid.uuid4().hex, "exp": int(time.time()) + 60},
+                         "jti": uuid.uuid4().hex, "exp": int(time.time()) + 600},
                         JWT_SECRET, algorithm="HS256")
 
 def _read_temp_ticket(ticket: str, uid: int, asset_id: int):
@@ -1062,7 +1063,7 @@ def _read_temp_ticket(ticket: str, uid: int, asset_id: int):
 
 @app.post("/api/v1/temp-cred")
 async def issue_temp_cred(request: Request, p=Depends(auth)):
-    """签发临时凭据 ticket：body {asset_id, login, password}；60s 内一次性使用"""
+    """签发临时凭据 ticket：body {asset_id, login, password}；10 分钟内一次性使用"""
     b = await request.json()
     asset_id, login, password = b.get("asset_id"), (b.get("login") or "").strip(), b.get("password") or ""
     if not (asset_id and login and password):
@@ -1074,7 +1075,7 @@ async def issue_temp_cred(request: Request, p=Depends(auth)):
         raise HTTPException(403, "无该资产的访问授权（或授权账号模式不匹配）")
     ticket = _make_temp_ticket(user['id'], asset_id, login, password)
     write_audit(user['username'], 'temp_cred', 'asset', asset_id, {'login': login})
-    return utils.ok({"ticket": ticket, "expires_in": 60})
+    return utils.ok({"ticket": ticket, "expires_in": 600})
 
 @app.websocket("/ws/terminal/{asset_id}/{account_id}")
 async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str = "", ct: str = ""):
