@@ -504,6 +504,20 @@ async def update_asset(aid: int, request: Request, p=Depends(require_role('admin
     write_audit(p['username'], 'update_asset', 'asset', aid, {'hostname': b.get('hostname')})
     return utils.ok(message="updated")
 
+@app.delete("/api/v1/assets/{aid}/accounts/{account_id}")
+async def remove_account(aid: int, account_id: int, p=Depends(require_role('admin'))):
+    """取消托管账号：删除凭据托管记录（历史会话/审计保留；活跃会话不拦截，仅凭据失效影响新连接）"""
+    acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, aid), one=True)
+    if not acc:
+        raise HTTPException(404, "account not found")
+    live = utils.query(
+        "SELECT COUNT(*) c FROM sessions WHERE asset_id=%s AND account_name=%s AND status='active'",
+        (aid, acc['username']), one=True)
+    utils.execute("DELETE FROM asset_accounts WHERE id=%s", (account_id,))
+    write_audit(p['username'], 'remove_account', 'asset', aid,
+                {'account': acc['username'], 'live_sessions': live['c'] if live else 0})
+    return utils.ok(message="removed")
+
 @app.delete("/api/v1/assets/{aid}")
 async def delete_asset(aid: int, p=Depends(require_role('admin'))):
     row = utils.query("SELECT * FROM assets WHERE id=%s", (aid,), one=True)

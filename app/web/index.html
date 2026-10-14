@@ -759,7 +759,7 @@ async function assetForm(id){
     ${mRow('SSH 端口','<input id="m-sshport" type="number" value="'+a.ssh_port+'">')}
     ${mRow('RDP 端口','<input id="m-rdpport" type="number" value="'+a.rdp_port+'">')}
     ${mRow('所属节点','<select id="m-node">'+nodeOpts+'</select>')}
-    ${mRow('托管账号','<input id="m-account" value="'+esc(a.account||'root')+'" placeholder="root / administrator"><div class="hint">'+(id?(a.account?`已托管账号：<b class="mono">${esc(a.account)}</b>（凭据加密存储，不可查看）`:'⚠ 尚未托管账号，填入账号密码后将自动创建'):'凭据由堡垒机加密托管，运维全程不可见')+'</div>')}
+    ${mRow('托管账号','<div style="display:flex;gap:8px;align-items:center"><input id="m-account" value="'+esc(a.account||'root')+'" placeholder="root / administrator" style="flex:1">'+(id&&a.account?`<button class="btn btn-ghost" style="white-space:nowrap;color:#cf1322;border-color:#cf1322" onclick="unManageAccount(${id},'${esc(a.account)}')">取消托管</button>`:'')+'</div><div class="hint">'+(id?(a.account?`已托管账号：<b class="mono">${esc(a.account)}</b>（凭据加密存储，不可查看；取消托管后连接时需手动输入账密）`:'⚠ 尚未托管账号，填入账号密码后将自动创建'):'凭据由堡垒机加密托管，运维全程不可见')+'</div>')}
     ${mRow('账号密码',`<input id="m-password" type="password" placeholder="${id?(a.account?'留空则不修改':'设置初始密码'):'初始密码'}">`)}
   </div>
   <div class="modal-foot">
@@ -819,6 +819,18 @@ async function delAsset(id,name){
   if(!confirm(`确认删除资产「${name}」？\n其托管账号与历史授权将一并移除（审计日志保留）。`))return;
   try{await api('/assets/'+id,{method:'DELETE'});toast('已删除：'+name);loadPage()}
   catch(e){toast('删除失败：'+e.message)}
+}
+async function unManageAccount(id,account){
+  if(!confirm(`确认取消托管账号「${account}」？\n托管凭据将被删除（历史会话与审计保留）；之后连接该资产需手动输入账密。`))return;
+  try{
+    // 资产列表行的 account 字段对应 asset_accounts 首个账号——按 asset+username 精确取 id 由后端处理：这里用查询接口
+    const accs=await api(`/assets/${id}/accounts`);
+    const acc=accs.find(x=>x.username===account)||accs[0];
+    if(!acc){toast('未找到该托管账号');return}
+    await api(`/assets/${id}/accounts/${acc.id}`,{method:'DELETE'});
+    toast(`已取消托管：${account}`);
+    closeModal();loadPage();
+  }catch(e){toast('取消托管失败：'+e.message)}
 }
 
 // ============ 策略表单（新建/编辑） ============
