@@ -953,6 +953,31 @@ async def rdp_token(request: Request, p=Depends(auth)):
     cfg = merged_session_config(user, asset_id, acc['username'])
     return utils.ok({"token": token, "expires_in": RDP_TOKEN_TTL, "rdp_config": cfg})
 
+@app.post("/api/v1/rdp/retoken")
+async def rdp_retoken(request: Request, p=Depends(auth)):
+    """分辨率切换续签：旧 rdp token（含 tc 临时凭据声明）换新 token（新分辨率）。
+    旧 token 的凭据声明直接复用——临时凭据用户无需重输。"""
+    b = await request.json()
+    old_token = b.get("token") or ""
+    import jwt as pyjwt
+    from config import JWT_SECRET
+    try:
+        old = pyjwt.decode(old_token, JWT_SECRET, algorithms=["HS256"])
+        if old.get("kind") != "rdp" or int(old.get("uid", 0)) != int(p['sub']):
+            raise ValueError("bad token")
+    except Exception:
+        raise HTTPException(401, "旧 RDP token 无效或已过期")
+    sw = max(640, min(3840, int(b.get('screen_width') or old.get("sw") or 1280)))
+    sh = max(480, min(2160, int(b.get('screen_height') or old.get("sh") or 720)))
+    payload = {"kind": "rdp", "asset": old["asset"], "acct": old.get("acct", 0),
+               "uid": old["uid"], "jti": uuid.uuid4().hex,
+               "sw": sw, "sh": sh,
+               "exp": int(time.time()) + RDP_TOKEN_TTL}
+    if old.get("tc"):          # 临时凭据声明原样续签
+        payload["tc"] = old["tc"]
+    token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    return utils.ok({"token": token, "expires_in": RDP_TOKEN_TTL})
+
 @app.websocket("/ws/rdp/{token}")
 async def ws_rdp(ws: WebSocket, token: str):
     """RDP 信令通道：JWT 校验（无状态，任意 worker 可验证）"""

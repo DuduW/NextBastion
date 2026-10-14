@@ -1510,15 +1510,22 @@ async function viewCast(sid, protocol, user){
   window.open(`/${page}?token=${TOKEN}&sid=${sid}&user=${encodeURIComponent(user||'')}`,'_blank','width=1080,height=720');
 }
 
-// RDP 分辨率切换：子窗请求 → 申请新 token 回传
+// RDP 分辨率切换：子窗请求 → 申请新 token 回传（带旧 token 时走 retoken 续签，临时凭据免重输）
 window.addEventListener('message',async ev=>{
   const d=ev.data||{};
   if(d.type==='nb-rdp-resize' && window.__rdpCtx){
     try{
-      const r=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
-        asset_id:window.__rdpCtx.assetId,account_id:window.__rdpCtx.accId,
-        ...(window.__rdpCtx.ct?{ct:window.__rdpCtx.ct}:{}),
-        screen_width:d.width,screen_height:d.height})});
+      let r;
+      if(d.token){
+        // 续签：旧 token 换新分辨率 token（托管/临时凭据通用）
+        r=await api('/rdp/retoken',{method:'POST',body:JSON.stringify({
+          token:d.token,screen_width:d.width,screen_height:d.height})});
+      }else{
+        r=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
+          asset_id:window.__rdpCtx.assetId,account_id:window.__rdpCtx.accId,
+          ...(window.__rdpCtx.ct?{ct:window.__rdpCtx.ct}:{}),
+          screen_width:d.width,screen_height:d.height})});
+      }
       ev.source.postMessage({type:'nb-rdp-newtoken',token:r.token},'*');
     }catch(e){ /* 主窗口可能已过期，子窗提示 */ }
   }

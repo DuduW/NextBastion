@@ -192,17 +192,17 @@ window.changeRes=function(){
   const [w,h]=v==='0x0'
     ? [screen.availWidth||screen.width, screen.availHeight||screen.height]
     : v.split('x').map(Number);
-  // 主窗口代申请新 token（带新分辨率），本窗重定向
+  // 主窗口代申请新 token（带新分辨率 + 本窗当前 token——retoken 续签对托管/临时凭据通用），本窗重定向
   try{
     if(window.opener && !window.opener.closed){
-      window.opener.postMessage({type:'nb-rdp-resize',width:w,height:h,ret:'rdp'},'*');
+      window.opener.postMessage({type:'nb-rdp-resize',width:w,height:h,ret:'rdp',token:qs.get('token')},'*');
       document.getElementById('info').textContent='正在切换 '+w+'×'+h+' …';
       // 主窗回传新 token
       window.addEventListener('message',function(ev){
         const d=ev.data||{};
         if(d.type==='nb-rdp-newtoken' && d.token){
           window.__gotTok=true;
-          location.href='/rdp.html?token='+encodeURIComponent(d.token)+'&user='+encodeURIComponent(USER)+'&res='+w+'x'+h;
+          location.href='/rdp.html?token='+encodeURIComponent(d.token)+'&user='+encodeURIComponent(USER)+'&res='+w+'x'+h+(location.hash||'');
         }
       });
       setTimeout(()=>{ if(!window.__gotTok) document.getElementById('info').textContent='切换超时，请重开 RDP'; },15000);
