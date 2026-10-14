@@ -131,7 +131,7 @@
       <div class="nav-item" data-page="assets" data-roles="admin"><span class="ic">🗂️</span>资产管理</div>
       <div class="nav-item" data-page="policies" data-roles="admin"><span class="ic">🔐</span>授权管理</div>
       <div class="nav-item" data-page="users" data-roles="admin"><span class="ic">👥</span>用户管理</div>
-      <div class="nav-item" data-page="groups" data-roles="admin"><span class="ic">👨‍👩‍👧‍👦</span>用户组</div>
+      <div class="nav-item" data-page="groups" data-roles="admin"><span class="ic">👨‍👩‍👧‍👦</span>用户组管理</div>
       <div class="nav-item" data-page="filters" data-roles="admin"><span class="ic">🧯</span>高危规则</div>
       <div class="nav-item" data-page="settings" data-roles="admin"><span class="ic">⚙️</span>系统设置</div>
       <div class="nav-group">审计中心</div>
@@ -408,7 +408,7 @@ async groups(){
       <button class="btn btn-sm btn-ghost" onclick="viewGroupMembers(${g.id},'${esc(g.name)}')">成员</button>
       ${g.id===1?'':`<button class="btn btn-sm btn-danger" onclick="delGroup(${g.id},'${esc(g.name)}')">删除</button>`}
     </td></tr>`).join('');
-  return `<div class="page-head"><div><h2>用户组</h2><div class="sub">共 ${rows.length} 个组 · 授权策略可按组批量授权</div></div>
+  return `<div class="page-head"><div><h2>用户组管理</h2><div class="sub">共 ${rows.length} 个组 · 授权策略可按组批量授权</div></div>
     <button class="btn btn-primary" onclick="groupForm()">+ 新建用户组</button></div>
   <div class="card">${rows.length?`<table><thead><tr><th>组名</th><th>描述</th><th>成员数</th><th>备注</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户组</div>'}</div>`;
 },
