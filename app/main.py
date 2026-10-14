@@ -921,9 +921,18 @@ async def rdp_token(request: Request, p=Depends(auth)):
     b = await request.json()
     asset_id, account_id = b.get('asset_id'), b.get('account_id')
     user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
-    acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
-    if not acc:
-        raise HTTPException(404, "account not found")
+    # ---- account_id=0：临时凭据（ct=ticket，用户自输账密） ----
+    temp_login = temp_pass = None
+    if account_id == 0:
+        entry = _read_temp_ticket(b.get("ct") or "", user['id'], asset_id) if b.get("ct") else None
+        if not entry:
+            raise HTTPException(401, "临时凭据已失效，请重新输入")
+        temp_login, temp_pass = entry["l"], entry["p"]
+        acc = {"id": 0, "username": temp_login}
+    else:
+        acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
+        if not acc:
+            raise HTTPException(404, "account not found")
     pol = check_access(user, asset_id, acc['username'])
     if not pol:
         raise HTTPException(403, "无授权访问该资产")
@@ -933,11 +942,14 @@ async def rdp_token(request: Request, p=Depends(auth)):
     # 会话分辨率 = 用户真实屏幕（前端上报），RDP 按此分辨率建立 → 1:1 铺满不缩放
     sw = max(640, min(3840, int(b.get('screen_width') or 1280)))
     sh = max(480, min(2160, int(b.get('screen_height') or 720)))
-    token = pyjwt.encode({"kind": "rdp", "asset": asset_id, "acct": account_id,
-                          "uid": user['id'], "jti": rdp_jti,
-                          "sw": sw, "sh": sh,
-                          "exp": int(time.time()) + RDP_TOKEN_TTL},
-                         JWT_SECRET, algorithm="HS256")
+    payload = {"kind": "rdp", "asset": asset_id, "acct": account_id,
+               "uid": user['id'], "jti": rdp_jti,
+               "sw": sw, "sh": sh,
+               "exp": int(time.time()) + RDP_TOKEN_TTL}
+    # 临时凭据内嵌 token（AESGCM 加密，60s 有效期与 token 同生命周期）
+    if temp_login is not None:
+        payload["tc"] = utils.encrypt_secret(json.dumps({"l": temp_login, "p": temp_pass}, ensure_ascii=False)).hex()
+    token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
     cfg = merged_session_config(user, asset_id, acc['username'])
     return utils.ok({"token": token, "expires_in": RDP_TOKEN_TTL, "rdp_config": cfg})
 

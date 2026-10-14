@@ -1452,18 +1452,54 @@ async function doTempConnect(assetId){
 }
 async function rdpConnect(assetId){
   const accs=await api(`/assets/${assetId}/accounts`);
-  if(!accs.length){toast('该资产未托管账号');return}
+  if(!accs.length){
+    // 无托管账号：弹窗自输账密（同 SSH）
+    tempCredRdp(assetId);
+    return;
+  }
   try{
-    // 默认 1024x768；用户可在 RDP 窗口顶栏切换常用分辨率
-    const d=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
-      asset_id:assetId,account_id:accs[0].id,
-      screen_width:1024,screen_height:768})});
-    // 记住上下文，供分辨率切换重连；clip 标志供 rdp.html 启用剪贴板
-    window.__rdpCtx={assetId,accId:accs[0].id};
-    const clip=(d.rdp_config&&d.rdp_config.clipboard===true)?'#clip=1':'';
-    const url=`/rdp.html?token=${encodeURIComponent(d.token)}&user=${encodeURIComponent(USER.username)}${clip}`;
-    window.open(url,'_blank');
+    await openRdp(assetId,accs[0].id);
   }catch(e){toast('RDP 授权失败：'+e.message)}
+}
+async function openRdp(assetId,accId,ct){
+  const d=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
+    asset_id:assetId,account_id:accId,...(ct?{ct}:{}) ,
+    screen_width:1024,screen_height:768})});
+  window.__rdpCtx={assetId,accId,ct:ct||null};
+  const clip=(d.rdp_config&&d.rdp_config.clipboard===true)?'#clip=1':'';
+  const url=`/rdp.html?token=${encodeURIComponent(d.token)}&user=${encodeURIComponent(USER.username)}${clip}`;
+  window.open(url,'_blank');
+}
+async function tempCredRdp(assetId){
+  const html=`<div class="modal-head"><b>🔑 输入 RDP 登录凭据</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    <div class="m-row"><label>账号（Windows 账号）</label><input id="tc-login" class="mono" placeholder="如 administrator / domain\\user" autocomplete="off"></div>
+    <div class="m-row"><label>密码</label><input id="tc-pass" type="password" placeholder="Windows 账号密码（仅本次连接使用，不保存）"></div>
+    <div class="hint">该资产未托管账号——凭据仅内存中转 60 秒，连接后立即销毁，全程图形录像审计。</div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" id="tc-go" onclick="doTempRdp(${assetId})">连 接</button>
+  </div>`;
+  openModal(html);
+  document.getElementById('tc-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doTempRdp(assetId)});
+  setTimeout(()=>document.getElementById('tc-login').focus(),50);
+}
+async function doTempRdp(assetId){
+  const login=document.getElementById('tc-login').value.trim();
+  const pass=document.getElementById('tc-pass').value;
+  if(!login||!pass){toast('请输入账号和密码');return}
+  const btn=document.getElementById('tc-go');
+  btn.disabled=true;btn.textContent='验证中…';
+  try{
+    // 先签 ticket（复用 SSH 通道），再走 RDP token（account_id=0 + ct）
+    const r=await api('/temp-cred',{method:'POST',body:JSON.stringify({asset_id:assetId,login,password:pass})});
+    closeModal();
+    await openRdp(assetId,0,r.ticket);
+  }catch(e){
+    toast('凭据校验未通过：'+e.message);
+    btn.disabled=false;btn.textContent='连 接';
+  }
 }
 async function killSess(sid){
   try{await api(`/sessions/${sid}/kill`,{method:'POST'});toast('会话已断开：'+sid);loadPage()}catch(e){toast('失败：'+e.message)}
@@ -1481,6 +1517,7 @@ window.addEventListener('message',async ev=>{
     try{
       const r=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
         asset_id:window.__rdpCtx.assetId,account_id:window.__rdpCtx.accId,
+        ...(window.__rdpCtx.ct?{ct:window.__rdpCtx.ct}:{}),
         screen_width:d.width,screen_height:d.height})});
       ev.source.postMessage({type:'nb-rdp-newtoken',token:r.token},'*');
     }catch(e){ /* 主窗口可能已过期，子窗提示 */ }

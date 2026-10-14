@@ -82,7 +82,17 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
         except Exception as e:
             import traceback; traceback.print_exc()
 
-    acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s", (info["acct"],), one=True)
+    # ---- acct=0：临时凭据（token 内嵌 AESGCM 加密账密，用户自输） ----
+    if int(info.get("acct", -1)) == 0 and info.get("tc"):
+        try:
+            _tc = json.loads(utils.decrypt_secret(bytes.fromhex(info["tc"])))
+            acc = {"id": 0, "asset_id": info["asset"], "username": _tc["l"],
+                   "secret_encrypted": utils.encrypt_secret(_tc["p"]), "status": "active", "cred_type": "temp"}
+        except Exception:
+            await ws.close(code=4401, reason="temp credential decode failed")
+            return
+    else:
+        acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s", (info["acct"],), one=True)
     asset = utils.query("SELECT * FROM assets WHERE id=%s", (info["asset"],), one=True)
     user = utils.query("SELECT * FROM users WHERE id=%s", (info["uid"],), one=True)
     if not (acc and asset and user):
