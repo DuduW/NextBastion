@@ -827,7 +827,7 @@ async function policyForm(id){
     api('/users'),api('/users/groups'),api('/assets'),api('/nodes'),api('/filters')]);
   window.__policyCtx={users,groups,assets,nodes,filters};
   let p={name:'',user_type:'group',user_id:groups[0]?.id,asset_type:'node',asset_id:nodes[1]?.id||nodes[0]?.id,
-         account_pattern:'*',command_filter_id:filters[0]?.id||1,valid_until:'',rdp:{clipboard:false,drive:false,watermark:true}};
+         account_pattern:'*',command_filter_id:filters[0]?.id||1,valid_until:'',rdp:{clipboard:false,drive:false,watermark:true,sftp:false}};
   let title='新建授权策略';
   if(id){
     const rows=await api('/policies');const old=rows.find(x=>x.id===id);
@@ -851,6 +851,9 @@ async function policyForm(id){
       <label><span class="switch"><input type="checkbox" id="p-drive" ${p.rdp.drive?'checked':''}><span class="sl"></span></span>磁盘映射</label>
       <label><span class="switch"><input type="checkbox" id="p-wm" ${p.rdp.watermark?'checked':''}><span class="sl"></span></span>水印</label>
     </div><div class="hint">默认建议：剪贴板/磁盘映射关闭，水印开启</div>`)}
+    ${mRow('SSH 文件传输',`<div class="m-check">
+      <label><span class="switch"><input type="checkbox" id="p-sftp" ${p.rdp.sftp?'checked':''}><span class="sl"></span></span>允许 Web SFTP 文件管理</label>
+    </div><div class="hint">默认关闭——勾选后用户方可在 SSH 会话中使用「📁 文件」（上传/下载留审计副本）</div>`)}
   </div>
   <div class="modal-foot">
     <button class="btn btn-ghost" onclick="closeModal()">取消</button>
@@ -880,7 +883,8 @@ async function savePolicy(id){
     rdp_session_config:{
       clipboard:document.getElementById('p-clip').checked,
       drive:document.getElementById('p-drive').checked,
-      watermark:document.getElementById('p-wm').checked
+      watermark:document.getElementById('p-wm').checked,
+      sftp:document.getElementById('p-sftp').checked
     }
   };
   if(!body.name){toast('策略名必填');return}

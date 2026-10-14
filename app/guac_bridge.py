@@ -185,8 +185,9 @@ async def ws_guac_bridge(ws: WebSocket, token: str):
             rdp_cfg = json.loads(pol["rdp_session_config"]) or {}
     except Exception:
         pass
-    no_clip = "true" if rdp_cfg.get("clipboard") is False else "false"
-    no_drive = "true" if rdp_cfg.get("drive") is False else "false"
+    # 剪贴板/磁盘映射：默认禁用（安全默认），策略显式开启才放行
+    no_clip = "false" if rdp_cfg.get("clipboard") is True else "true"
+    no_drive = "false" if rdp_cfg.get("drive") is True else "true"
 
     # 会话分辨率：token 内嵌的用户真实屏幕尺寸（无则 1280x720）
     ses_w = str(info.get("sw") or 1280)

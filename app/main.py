@@ -1395,9 +1395,11 @@ async def file_session(asset_id: int, account_id: int, p=Depends(auth)):
         raise HTTPException(400, "仅支持 SSH 协议资产")
     try:
         fsid = await fileman.open_session(user, asset, acc)
-    except PermissionError:
-        write_audit(p['username'], 'deny_fileman', 'asset', asset_id, {'reason': 'no policy'})
-        raise HTTPException(403, "无该资产的访问授权")
+    except PermissionError as e:
+        write_audit(p['username'], 'deny_fileman', 'asset', asset_id,
+                    {'reason': str(e) or 'no policy'})
+        msg = "无该资产的访问授权" if "not granted" not in str(e) else "该资产的授权策略未开启「文件传输」权限（请联系管理员在授权策略中勾选）"
+        raise HTTPException(403, msg)
     except asyncio.TimeoutError:
         raise HTTPException(502, "SSH 连接超时")
     except Exception as e:

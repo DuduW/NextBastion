@@ -3,7 +3,7 @@
 - 目录浏览 / 上传（分片）/ 下载（流式）/ 重命名 / 删除（回收站）
 - 全量写 file_transfer_logs；高危目录副本留存（SHA256）
 """
-import asyncio, hashlib, os, time
+import asyncio, hashlib, json, os, time
 
 import asyncssh
 
@@ -27,8 +27,16 @@ def _risk(path: str) -> bool:
 async def open_session(user: dict, asset: dict, account: dict) -> str:
     """校验授权（由调用方 check_access 后传入），建 SFTP 连接，返回 fsid"""
     from main import check_access   # 延迟导入避免环
-    if not check_access(user, asset["id"], account["username"]):
+    pol = check_access(user, asset["id"], account["username"])
+    if not pol:
         raise PermissionError("no access policy")
+    # F4-6：文件传输需授权策略显式开启（rdp_session_config 同款承载，键 sftp）
+    try:
+        cfg = json.loads(pol.get("rdp_session_config") or "{}") or {}
+    except Exception:
+        cfg = {}
+    if cfg.get("sftp") is not True:
+        raise PermissionError("file transfer not granted by policy")
     secret = utils.decrypt_secret(account["secret_encrypted"])
     conn = await asyncio.wait_for(
         asyncssh.connect(asset["ip"], port=asset["ssh_port"] or 22,
@@ -76,6 +84,12 @@ async def list_dir(fsid: str, path: str) -> dict:
     s = _sess(fsid)
     sf = await _sftp(s)
     path = path or "/"
+    # 相对路径（如 "."）转绝对路径——默认目录 = 账号 home
+    try:
+        if not path.startswith("/"):
+            path = await sf.realpath(path)
+    except Exception:
+        pass
     attrs = await sf.listdir(path)
     import stat as _st
     items = []

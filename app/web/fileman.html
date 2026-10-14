@@ -117,13 +117,16 @@ function fmtTime(t){const d=new Date(t*1000);return d.toLocaleDateString('zh-CN'
 function goHome(){location.href='/index.html'}
 
 // ===== 会话建立 =====
-api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST'}).then(d=>{
+api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST'}).then(async d=>{
   FSID=d.fsid;CONNECTED=true;
   document.getElementById('asset-info').textContent=`${d.hostname} · ${d.ip}`;
   const dot=document.getElementById('conn-dot');
   dot.style.background='#389e0d'; dot.title='已连接';
   document.getElementById('btn-disc').style.display='';
-  ls('/');
+  // 默认目录：账号 home（sftp normalize('.')），失败回退 /
+  let home='/';
+  try{ const r=await api(`/files/${FSID}/list?path=.`); home=r.cwd||'/'; }catch(e){}
+  ls(home);
   renderTree();
   setInterval(()=>{ if(!CONNECTED)return; api(`/files/${FSID}/list?path=${encodeURIComponent(CWD)}`).catch(()=>{}); },300000); // 保活
 }).catch(e=>{
