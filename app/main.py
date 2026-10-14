@@ -1506,17 +1506,22 @@ async def file_list(fsid: str, path: str = "/", p=Depends(auth)):
 
 @app.post("/api/v1/files/{fsid}/upload")
 async def file_upload(fsid: str, request: Request, p=Depends(auth)):
-    """分片上传：?path=&offset=&append=1|0，body 为原始分片字节"""
+    """分片上传：?path=&offset=&append=1|0&last=1（last=1 时记一条完整审计，避免分片刷屏）"""
     path = request.query_params.get('path', '')
     offset = int(request.query_params.get('offset', 0) or 0)
     append = request.query_params.get('append', '0') == '1'
+    last = request.query_params.get('last', '0') == '1'
     data = await request.body()
     if not path:
         raise HTTPException(400, "missing path")
     try:
         written = await fileman.upload_chunk(fsid, path, offset, data, append)
-        s = fileman._sess(fsid)
-        fileman.log_transfer(s, "upload", path, written, "ok")
+        if last:
+            s = fileman._sess(fsid)
+            sf = await fileman._sftp(s)
+            st = await sf.stat(path)
+            total = getattr(st, "st_size", None) or getattr(st, "size", 0) or written
+            fileman.log_transfer(s, "upload", path, total, "ok")
         return utils.ok({"offset": written})
     except KeyError:
         raise HTTPException(410, "文件会话已过期")

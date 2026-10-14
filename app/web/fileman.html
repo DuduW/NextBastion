@@ -213,7 +213,8 @@ async function doUpload(file){
   const t0=performance.now();let offset=0,first=true;
   while(offset<file.size){
     const chunk=await file.slice(offset,offset+CHUNK).arrayBuffer();
-    await fetch(`/api/v1/files/${FSID}/upload?path=${encodeURIComponent(dest)}&offset=${offset}&append=${first?0:1}`,{
+    const isLast=offset+chunk.byteLength>=file.size;
+    await fetch(`/api/v1/files/${FSID}/upload?path=${encodeURIComponent(dest)}&offset=${offset}&append=${first?0:1}&last=${isLast?1:0}`,{
       method:'POST',headers:{'Authorization':'Bearer '+TOKEN},body:chunk});
     offset+=chunk.byteLength;first=false;
     const pct=Math.round(offset/file.size*100);
