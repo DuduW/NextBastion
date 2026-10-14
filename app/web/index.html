@@ -138,6 +138,8 @@
       <div class="nav-item" data-page="active" data-roles="admin,auditor"><span class="ic">🟢</span>在线会话</div>
       <div class="nav-item" data-page="sessions" data-roles="admin,auditor"><span class="ic">🎬</span>会话审计</div>
       <div class="nav-item" data-page="commands" data-roles="admin,auditor"><span class="ic">📜</span>命令审计</div>
+      <div class="nav-item" data-page="transfers" data-roles="admin,auditor"><span class="ic">📁</span>文件传输审计</div>
+      <div class="nav-item" data-page="acctscan" data-roles="admin,auditor"><span class="ic">🧾</span>账号盘点</div>
       <div class="spacer"></div>
       <div class="side-user"><div class="avatar" id="u-avatar">A</div>
         <div class="u"><b id="u-name">-</b><span id="u-rolebar">-</span></div>
@@ -174,6 +176,7 @@ async function api(path, opts={}){
 const badge=(t,c)=>`<span class="badge badge-${c}">${t}</span>`;
 const protoBadge=p=>p==='rdp'?badge('RDP','blue'):badge('SSH','green');
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const fmtSize=n=>{if(n==null)return '-';if(n<1024)return n+'B';const u=['KB','MB','GB'];let i=-1;do{n/=1024;i++}while(n>=1024&&i<2);return n.toFixed(1)+u[i]};
 
 async function doLogin(){
   const err=document.getElementById('login-err');err.style.display='none';
@@ -272,17 +275,19 @@ async function foDel(el){
 }
 
 function pgGo(kind,p){
-  if(kind==='sess')window.__sessPage=p;else window.__cmdPage=p;
-  go(kind==='sess'?'sessions':'commands');
+  if(kind==='sess')window.__sessPage=p;else if(kind==='tr')window.__trPage=p;else window.__cmdPage=p;
+  go(kind==='sess'?'sessions':kind==='tr'?'transfers':'commands');
 }
 function pgSize(kind,el){
   const ps=parseInt(el.value,10)||20;
-  if(kind==='sess'){window.__sessSize=ps;window.__sessPage=1;}else{window.__cmdSize=ps;window.__cmdPage=1;}
-  go(kind==='sess'?'sessions':'commands');
+  if(kind==='sess'){window.__sessSize=ps;window.__sessPage=1;}
+  else if(kind==='tr'){window.__trSize=ps;window.__trPage=1;}
+  else{window.__cmdSize=ps;window.__cmdPage=1;}
+  go(kind==='sess'?'sessions':kind==='tr'?'transfers':'commands');
 }
 function pagerHtml(kind,d){
   const page=d.page||1,pages=d.pages||1,total=d.total||0;
-  const curSize=parseInt(d.page_size,10)||(kind==='sess'?window.__sessSize:window.__cmdSize)||20;
+  const curSize=parseInt(d.page_size,10)||(kind==='sess'?window.__sessSize:kind==='tr'?window.__trSize:window.__cmdSize)||20;
   const sizeSel=`<select onchange="pgSize('${kind}',this)" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg-1,#fff);color:var(--text-1,#222)">`
     +[20,50,100].map(s=>`<option value="${s}"${s===curSize?' selected':''}>${s} 条/页</option>`).join('')+`</select>`;
   if(pages<=1)return `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap"><span class="hint" style="flex:1"></span><span class="hint">共 ${total} 条</span>${sizeSel}</div>`;
@@ -316,7 +321,7 @@ async myassets(){
     <td>${protoBadge(a.protocol)}</td><td>${esc(a.node_name)}</td>
     <td>${a.protocol==='rdp'
       ?`<button class="btn btn-sm btn-ghost" onclick="rdpConnect(${a.id})">RDP</button>`
-      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id})">连 接</button>`}</td></tr>`).join('');
+      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id})">连 接</button> <button class="btn btn-sm btn-ghost" onclick="fileConnect(${a.id})">📁 文件</button>`}</td></tr>`).join('');
   return `<div class="page-head"><div><h2>我的资产</h2><div class="sub">五维授权过滤后的可见资产</div></div></div>
   <div class="card"><div class="search-bar" style="gap:10px;flex-wrap:wrap">
       <input id="my-q" placeholder="🔍 搜索主机名 / IP / 系统 / 分组" style="flex:1;min-width:200px" oninput="myAssetsFilter()">
@@ -435,6 +440,7 @@ async settings(){
   try{wh=await api('/settings/webhook')}catch(e){}
   let fo={os_type:[],label:[]};
   try{fo=await api('/assets/field-options');window.__fieldOptions=fo;}catch(e){}
+  setTimeout(loadSyslog,100);
   return `<div class="page-head"><div><h2>系统设置</h2><div class="sub">告警通道 · 目录认证 · 系统信息</div></div></div>
   <div class="card" style="margin-bottom:16px">
     <div style="font-weight:600;margin-bottom:4px">🗂 资产字段选项（数据库字典）</div>
@@ -463,6 +469,35 @@ async settings(){
       <button class="btn btn-ghost" id="wh-test-btn" onclick="testWebhook()">📡 发送测试</button>
     </div>
     <div id="wh-test-result" style="margin-top:10px"></div>
+  </div>
+
+  <!-- ================= F5 Syslog 转发 ================= -->
+  <div class="card" style="margin-bottom:16px" id="syslog-card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div style="font-weight:600">📡 Syslog 转发（SIEM/ELK）</div>
+      <span style="font-size:11px;color:var(--text-3)">RFC5424 · 安全事件实时转发企业日志平台（与 Webhook 并行）</span>
+    </div>
+    <div style="display:flex;gap:10px;margin:10px 0;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="sl-enabled"> 启用转发</label>
+      <input id="sl-server" placeholder="192.168.110.50:514" style="flex:1;min-width:180px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px">
+      <select id="sl-proto" style="padding:8px;border:1px solid var(--border);border-radius:10px;font-size:12px">
+        <option value="tcp">TCP</option><option value="udp">UDP</option>
+      </select>
+    </div>
+    <div style="font-size:12px;color:var(--text-3);margin-bottom:6px">转发事件类别</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="sl-events">
+      <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox" id="sl-ev-login" checked> 登录</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox" id="sl-ev-cmd_block" checked> 命令拦截</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox" id="sl-ev-high_risk" checked> 高危告警</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox" id="sl-ev-session" checked> 会话</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox" id="sl-ev-file_transfer" checked> 文件传输</label>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="saveSyslog()">保存配置</button>
+      <button class="btn btn-ghost" onclick="testSyslog()">📡 发送测试</button>
+      <span id="sl-stats" style="font-size:11.5px;color:var(--text-3)"></span>
+    </div>
+    <div id="sl-result" style="margin-top:10px"></div>
   </div>
 
   <!-- ================= LDAP 目录认证（Demo · PRD v0.1） ================= -->
@@ -581,6 +616,48 @@ async commands(){
   return `<div class="page-head"><div><h2>命令审计</h2><div class="sub">命令日志（SSH 会话）</div></div>
     <button class="btn btn-ghost" onclick="location.href=API+'/export/commands'">📥 导出 CSV</button></div>
   <div class="card">${rows.length?`<table><thead><tr><th>时间</th><th>用户</th><th>资产</th><th>命令</th><th>规则</th><th>动作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无命令记录</div>'}${pagerHtml('cmd',d)}</div>`;
+},
+async transfers(){
+  if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
+  const page=window.__trPage||1;
+  let d={rows:[],total:0,page:1,pages:1};
+  try{d=await api('/files/transfers?page='+page+'&page_size='+(window.__trSize||20));}catch(e){}
+  const rows=d.rows||[];
+  const dirTag={upload:'上传',download:'下载',delete:'删除',rename:'改名'};
+  const tr=rows.map(t=>`<tr><td class="mono">${esc(t.transferred_at)}</td><td><b>${esc(t.username||'-')}</b></td><td>${esc(t.hostname||'-')}</td>
+    <td>${dirTag[t.direction]||t.direction}</td><td class="mono">${esc(t.file_name).slice(0,55)}</td>
+    <td class="mono">${t.file_size?fmtSize(t.file_size):'-'}</td>
+    <td>${t.evidence_sha256?badge('留存','green'):'-'}</td>
+    <td>${t.result==='ok'?badge('成功','green'):badge(t.result,'red')}</td></tr>`).join('');
+  return `<div class="page-head"><div><h2>文件传输审计</h2><div class="sub">Web SFTP 传输记录（高危目录自动留存副本）</div></div></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>时间</th><th>用户</th><th>资产</th><th>方向</th><th>文件</th><th>大小</th><th>副本</th><th>结果</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无传输记录（使用「我的资产 → 📁 文件」产生）</div>'}${pagerHtml('tr',d)}</div>`;
+},
+async acctscan(){
+  if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
+  let r=null;
+  try{r=await api('/account-scan/latest');}catch(e){}
+  if(!r)return `<div class="page-head"><div><h2>账号盘点</h2><div class="sub">僵尸/私建账号识别</div></div>
+    ${USER.role==='admin'?'<button class="btn btn-primary" onclick="runScan()">🔍 立即扫描</button>':''}</div>
+    <div class="card"><div class="empty">尚未扫描——点击「立即扫描」采集资产账号（每周日 03:00 自动执行）</div></div>`;
+  const s=r.summary||{},cats=s.categories||{};
+  const catName={managed_active:'已托管·活跃',managed_idle:'已托管·闲置',unmanaged:'未托管（私建嫌疑）',managed_missing:'托管·资产已失效'};
+  const catColor={managed_active:'green',managed_idle:'orange',unmanaged:'red',managed_missing:'gray'};
+  const hr=s.high_risk||[];
+  const det=(r.details||[]).filter(d=>!d.error);
+  let hrRows='';
+  for(const d of det){
+    for(const u of (d.users||[])){
+      if(u.risk==='high')hrRows+=`<tr style="background:var(--red-bg,#fff1f0)"><td>${esc(d.asset)}</td><td class="mono"><b>${esc(u.name)}</b></td><td><b>${u.uid}</b></td><td class="mono">${esc(u.shell)}</td><td>${esc(u.last||'—')}</td><td>${badge('🔴 特权私建','red')}</td></tr>`;
+      else if(u.risk==='mid')hrRows+=`<tr><td>${esc(d.asset)}</td><td class="mono">${esc(u.name)}</td><td>${u.uid}</td><td class="mono">${esc(u.shell)}</td><td>${esc(u.last||'—')}</td><td>${badge('🟡 闲置','orange')}</td></tr>`;
+    }
+  }
+  return `<div class="page-head"><div><h2>账号盘点</h2><div class="sub">扫描于 ${esc(s.scanned_at||'-')} · 成功 ${s.ok||0} / 失败 ${s.failed||0} 台 · by ${esc(r.created_by||'')}</div></div>
+    ${USER.role==='admin'?'<button class="btn btn-primary" onclick="runScan(this)">🔄 重新扫描</button>':''}</div>
+  <div class="card" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px">
+    ${Object.entries(catName).map(([k,n])=>`<div><div style="font-size:24px;font-weight:700;color:var(--primary)">${cats[k]||0}</div><div class="sub">${n}</div></div>`).join('')}
+  </div>
+  <div class="card"><div style="font-weight:600;margin-bottom:8px">🚨 风险发现（特权私建 / 闲置）</div>
+    ${hrRows?`<table><thead><tr><th>资产</th><th>账号</th><th>UID</th><th>Shell</th><th>最后登录</th><th>风险</th></tr></thead><tbody>${hrRows}</tbody></table>`:'<div class="empty">无风险发现 ✅</div>'}</div>`;
 }
 };
 
@@ -1105,6 +1182,65 @@ async function doImport(){
 function watchSession(sid){
   window.open(`/watch.html?token=${TOKEN}&sid=${sid}`,'_blank','width=900,height=600');
 }
+// ===== F8 账号盘点 =====
+async function runScan(btn){
+  if(btn){btn.disabled=true;btn.textContent='⏳ 扫描中…';}
+  toast('扫描已启动（资产较多时约需 10~30 秒）');
+  try{
+    await api('/account-scan/run',{method:'POST',body:JSON.stringify({bg:0})});
+    toast('扫描完成');
+    loadPage();
+  }catch(e){toast('扫描失败：'+e.message);if(btn){btn.disabled=false;btn.textContent='🔄 重新扫描';}}
+}
+// ===== F5 Syslog 转发 =====
+async function loadSyslog(){
+  try{
+    const c=await api('/settings/syslog');
+    document.getElementById('sl-enabled').checked=!!c.enabled;
+    document.getElementById('sl-server').value=c.server||'';
+    document.getElementById('sl-proto').value=c.proto||'tcp';
+    const ev=c.events||{};
+    for(const k of ['login','cmd_block','high_risk','session','file_transfer']){
+      const el=document.getElementById('sl-ev-'+k); if(el)el.checked=!!ev[k];
+    }
+    if(c.enabled)loadSyslogStats();
+  }catch(e){}
+}
+async function loadSyslogStats(){
+  try{
+    const s=await api('/settings/syslog/stats');
+    document.getElementById('sl-stats').textContent=
+      `今日已发 ${s.sent||0} · 失败 ${s.failed||0} · 丢弃 ${s.dropped||0}`+(s.last_ok_ts?` · 最近成功 ${s.last_ok_ts}`:'');
+  }catch(e){}
+}
+function syslogCollect(){
+  const events={};
+  for(const k of ['login','cmd_block','high_risk','session','file_transfer']){
+    const el=document.getElementById('sl-ev-'+k); if(el)events[k]=el.checked?1:0;
+  }
+  return {enabled:document.getElementById('sl-enabled').checked?1:0,
+          server:document.getElementById('sl-server').value.trim(),
+          proto:document.getElementById('sl-proto').value,events};
+}
+async function saveSyslog(){
+  try{
+    await api('/settings/syslog',{method:'POST',body:JSON.stringify(syslogCollect())});
+    toast('Syslog 配置已保存');
+    if(document.getElementById('sl-enabled').checked)setTimeout(loadSyslogStats,500);
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function testSyslog(){
+  const box=document.getElementById('sl-result');
+  const c=syslogCollect();
+  if(!c.server){box.innerHTML='<div style="font-size:12px;color:#cf1322">请先填写服务器地址（IP:端口）</div>';return}
+  box.innerHTML='<span style="font-size:12px;color:var(--text-3)">发送测试消息中…</span>';
+  try{
+    const r=await api('/settings/syslog/test',{method:'POST',body:JSON.stringify({server:c.server,proto:c.proto})});
+    box.innerHTML=r.ok
+      ?`<div style="font-size:12px;color:#389e0d;background:#f6ffed;border:1px solid #b7eb8f;border-radius:8px;padding:8px 12px">✅ 测试消息已发送（${r.ms}ms）—— 请到 ELK/syslog 服务器确认收到 nextbastion 消息</div>`
+      :`<div style="font-size:12px;color:#cf1322;background:#fff1f0;border:1px solid #ffa39e;border-radius:8px;padding:8px 12px">❌ 发送失败：${esc(r.error)}</div>`;
+  }catch(e){box.innerHTML='<div style="font-size:12px;color:#cf1322">❌ '+esc(e.message)+'</div>'}
+}
 async function saveWebhook(){
   try{
     await api('/settings/webhook',{method:'POST',body:JSON.stringify({urls:document.getElementById('wh-urls').value})});
@@ -1262,6 +1398,12 @@ async function sshConnect(assetId){
   const acc=accs[0];
   const url=`/terminal.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}&user=${encodeURIComponent(USER.username)}`;
   window.open(url,'_blank');
+}
+async function fileConnect(assetId){
+  const accs=await api(`/assets/${assetId}/accounts`);
+  if(!accs.length){toast('该资产未托管账号');return}
+  const acc=accs[0];
+  window.open(`/fileman.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}`,'_blank');
 }
 async function rdpConnect(assetId){
   const accs=await api(`/assets/${assetId}/accounts`);

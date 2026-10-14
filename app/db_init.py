@@ -138,13 +138,24 @@ CREATE TABLE IF NOT EXISTS file_transfer_logs (
   direction VARCHAR(10),
   file_name VARCHAR(255),
   file_size BIGINT DEFAULT 0,
-  transferred_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  result VARCHAR(16) DEFAULT 'ok',
+  evidence_sha256 VARCHAR(64) DEFAULT '',
+  transferred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_time (transferred_at), INDEX idx_user (user_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS command_filters (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(128) NOT NULL,
   rules JSON,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS account_scans (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  summary JSON,
+  detail JSON,
+  created_by VARCHAR(64) DEFAULT 'system',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 

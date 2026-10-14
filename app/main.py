@@ -78,6 +78,14 @@ def write_login_log(username, ip, result, reason=''):
                       (username, ip, result, reason))
     except Exception:
         pass
+    # F5: Syslog 埋点（登录事件）
+    try:
+        import syslog_fwd
+        ev = "login" if result == "success" else ("lock" if "lock" in (reason or "") else "login_fail")
+        syslog_fwd.emit(ev, f"登录{'成功' if result=='success' else '失败'}: {username} ({reason or 'ok'})",
+                        {"actor": username, "ip": ip, "result": result, "reason": reason})
+    except Exception:
+        pass
 
 def write_audit(actor, action, target_type='', target_id='', detail=None):
     try:
@@ -929,6 +937,12 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
                      VALUES (%s,%s,%s,'ssh',%s,%s,%s)""",
                   (sid, user['id'], asset_id, acc['username'],
                    ws.client.host if ws.client else '-', cast_path))
+    try:
+        import syslog_fwd
+        syslog_fwd.emit("session_open", f"SSH 会话建立: {user['username']} → {asset['hostname']}",
+                        {"actor": user['username'], "asset": asset['hostname'], "session": sid})
+    except Exception:
+        pass
 
     import asyncssh
     try:
@@ -1005,6 +1019,9 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
                                 await ws.send_text(f"\r\n\x1b[41;97m[NextBastion] 命令已被高危策略阻断（规则: {rule}）· 已告警管理员\x1b[0m\r\n")
                                 utils.execute("UPDATE sessions SET is_high_risk=1 WHERE id=%s", (sid,))
                                 asyncio.create_task(notify_alert(cmdline, rule, user['username'], asset['hostname']))
+                                import syslog_fwd
+                                syslog_fwd.emit("cmd_block", f"命令阻断: {cmdline[:100]}",
+                                                {"actor": user['username'], "rule": rule, "session": sid})
                             except Exception:
                                 pass
                         elif action == 'alert':
@@ -1337,7 +1354,12 @@ async def test_webhook(request: Request, p=Depends(require_role('admin'))):
     return utils.ok({"results": results, "message": f"{ok_n}/{len(results)} 个地址测试成功"})
 
 async def notify_alert(cmdline, rule, username, hostname):
-    """高危命令实时推送 webhook（钉钉/企微文本格式兼容）"""
+    """高危命令实时推送 webhook（钉钉/企微文本格式兼容）+ Syslog（F5）"""
+    try:
+        import syslog_fwd
+        syslog_fwd.emit("high_risk", f"高危命令: {cmdline[:120]}", {"actor": username, "asset": hostname, "rule": rule})
+    except Exception:
+        pass
     try:
         row = utils.query("SELECT detail FROM audit_logs WHERE action='webhook_config' ORDER BY id DESC LIMIT 1", one=True)
         if not row:
@@ -1355,6 +1377,189 @@ async def notify_alert(cmdline, rule, username, hostname):
                 pass
     except Exception:
         pass
+
+# ============================================================
+# 12bis. F4 Web SFTP 文件管理（2026-10-14）
+# ============================================================
+import fileman
+
+@app.post("/api/v1/files/{asset_id}/{account_id}/session")
+async def file_session(asset_id: int, account_id: int, p=Depends(auth)):
+    """建立文件管理会话（校验五维授权），返回 fsid"""
+    user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
+    acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
+    asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
+    if not (user and acc and asset):
+        raise HTTPException(404, "asset or account not found")
+    if asset.get("protocol") not in ("ssh", None):
+        raise HTTPException(400, "仅支持 SSH 协议资产")
+    try:
+        fsid = await fileman.open_session(user, asset, acc)
+    except PermissionError:
+        write_audit(p['username'], 'deny_fileman', 'asset', asset_id, {'reason': 'no policy'})
+        raise HTTPException(403, "无该资产的访问授权")
+    except asyncio.TimeoutError:
+        raise HTTPException(502, "SSH 连接超时")
+    except Exception as e:
+        raise HTTPException(502, f"SSH 连接失败: {str(e)[:80]}")
+    write_audit(p['username'], 'fileman_open', 'asset', asset_id, {'fsid': fsid})
+    return utils.ok({"fsid": fsid, "hostname": asset['hostname'], "ip": asset['ip']})
+
+@app.get("/api/v1/files/{fsid}/list")
+async def file_list(fsid: str, path: str = "/", p=Depends(auth)):
+    try:
+        return utils.ok(await fileman.list_dir(fsid, path))
+    except KeyError:
+        raise HTTPException(410, "文件会话已过期，请重新打开")
+    except FileNotFoundError:
+        raise HTTPException(404, "路径不存在")
+    except Exception as e:
+        raise HTTPException(500, str(e)[:100])
+
+@app.post("/api/v1/files/{fsid}/upload")
+async def file_upload(fsid: str, request: Request, p=Depends(auth)):
+    """分片上传：?path=&offset=&append=1|0，body 为原始分片字节"""
+    path = request.query_params.get('path', '')
+    offset = int(request.query_params.get('offset', 0) or 0)
+    append = request.query_params.get('append', '0') == '1'
+    data = await request.body()
+    if not path:
+        raise HTTPException(400, "missing path")
+    try:
+        written = await fileman.upload_chunk(fsid, path, offset, data, append)
+        s = fileman._sess(fsid)
+        fileman.log_transfer(s, "upload", path, written, "ok")
+        return utils.ok({"offset": written})
+    except KeyError:
+        raise HTTPException(410, "文件会话已过期")
+    except Exception as e:
+        raise HTTPException(500, str(e)[:100])
+
+@app.get("/api/v1/files/{fsid}/download")
+async def file_download(fsid: str, path: str, p=Depends(auth)):
+    try:
+        r = await fileman.download(fsid, path)
+    except KeyError:
+        raise HTTPException(410, "文件会话已过期")
+    except FileNotFoundError:
+        raise HTTPException(404, "文件不存在")
+    except Exception as e:
+        raise HTTPException(500, str(e)[:100])
+    return StreamingResponse(r["f"], media_type="application/octet-stream",
+                             headers={"Content-Disposition":
+                                      f"attachment; filename*=UTF-8''{__import__('urllib.parse', fromlist=['quote']).quote(os.path.basename(path))}"})
+
+@app.post("/api/v1/files/{fsid}/op")
+async def file_op(fsid: str, request: Request, p=Depends(auth)):
+    """rename / delete（删除进回收站）"""
+    b = await request.json()
+    op = b.get("op")
+    try:
+        s = fileman._sess(fsid)
+        if op == "rename":
+            await fileman.rename(fsid, b["old"], b["new"])
+        elif op == "delete":
+            await fileman.delete(fsid, b["path"])
+        else:
+            raise HTTPException(400, "unknown op")
+        write_audit(p['username'], f'fileman_{op}', 'asset', s["asset"]["id"],
+                    {'path': b.get('path') or b.get('old')})
+        return utils.ok(message="done")
+    except KeyError:
+        raise HTTPException(410, "文件会话已过期")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e)[:100])
+
+@app.get("/api/v1/files/transfers")
+async def file_transfers(request: Request, p=Depends(require_role('admin', 'auditor'))):
+    """文件传输审计（分页 + 筛选）"""
+    q = request.query_params.get('q', '').strip()
+    direction = request.query_params.get('direction', '').strip()
+    page = max(1, int(request.query_params.get('page', 1) or 1))
+    size = min(200, max(20, int(request.query_params.get('page_size', 20) or 20)))
+    where, args = "1=1", []
+    if q:
+        where += " AND (t.file_name LIKE %s OR u.username LIKE %s OR a.hostname LIKE %s)"
+        args += [f"%{q}%"] * 3
+    if direction:
+        where += " AND t.direction=%s"
+        args.append(direction)
+    total = utils.query(f"SELECT COUNT(*) c FROM file_transfer_logs t LEFT JOIN users u ON t.user_id=u.id LEFT JOIN assets a ON t.asset_id=a.id WHERE {where}", args, one=True)['c']
+    rows = utils.query(
+        f"""SELECT t.id, u.username, a.hostname, t.direction, t.file_name, t.file_size,
+            t.result, t.evidence_sha256, t.transferred_at
+            FROM file_transfer_logs t LEFT JOIN users u ON t.user_id=u.id LEFT JOIN assets a ON t.asset_id=a.id
+            WHERE {where} ORDER BY t.id DESC LIMIT %s OFFSET %s""", args + [size, (page - 1) * size])
+    pages = (total + size - 1) // size
+    return utils.ok({"rows": rows, "total": total, "page": page, "pages": pages, "page_size": size})
+
+# ============================================================
+# 12ter. F5 Syslog 转发（2026-10-14）
+# ============================================================
+import syslog_fwd
+
+@app.on_event("startup")
+async def _start_syslog():
+    syslog_fwd.start()
+
+@app.get("/api/v1/settings/syslog")
+async def syslog_get(p=Depends(require_role('admin'))):
+    return utils.ok(syslog_fwd.get_config())
+
+@app.post("/api/v1/settings/syslog")
+async def syslog_set(request: Request, p=Depends(require_role('admin'))):
+    b = await request.json()
+    syslog_fwd.save_config(b)
+    syslog_fwd.emit("config_change", f"Syslog 配置已更新（enabled={b.get('enabled')}）", {"actor": p['username']})
+    # 注意：write_audit 的 action 不能用 syslog_config（该 action 是 syslog_fwd 的配置存储行，会被 get_config 误读）
+    write_audit(p['username'], 'syslog_saved', 'system', 0, {'enabled': b.get('enabled'), 'server': b.get('server')})
+    return utils.ok(message="saved")
+
+@app.post("/api/v1/settings/syslog/test")
+async def syslog_test(request: Request, p=Depends(require_role('admin'))):
+    b = await request.json()
+    r = syslog_fwd.test_message(b.get("server", ""), b.get("proto", "tcp"))
+    write_audit(p['username'], 'syslog_test', 'system', 0, r)
+    return utils.ok(r)
+
+@app.get("/api/v1/settings/syslog/stats")
+async def syslog_stats(p=Depends(require_role('admin'))):
+    return utils.ok({**syslog_fwd.STATS, "queue": syslog_fwd.Q.qsize()})
+
+# ============================================================
+# 12quater. F8 账号盘点（2026-10-14）
+# ============================================================
+import account_scan as _ascan
+
+@app.post("/api/v1/account-scan/run")
+async def account_scan_run(bg: int = 0, p=Depends(require_role('admin'))):
+    """手动扫描（bg=1 后台跑，立即返回）；async 上下文里用 to_thread 跑（scan_all 内部用 asyncio.run）"""
+    if bg:
+        import threading
+        threading.Thread(target=_ascan.scan_all, kwargs={"actor": p['username']}, daemon=True).start()
+        return utils.ok({"started": True})
+    r = await asyncio.to_thread(_ascan.scan_all, **{"actor": p['username']})
+    write_audit(p['username'], 'account_scan', 'system', 0,
+                {'ok': r['ok'], 'failed': r['failed'], 'high_risk': len(r['high_risk'])})
+    return utils.ok(r)
+
+@app.get("/api/v1/account-scan/latest")
+async def account_scan_latest(p=Depends(require_role('admin', 'auditor'))):
+    row = utils.query("SELECT id, summary, detail, created_by, created_at FROM account_scans ORDER BY id DESC LIMIT 1", one=True)
+    if not row:
+        return utils.ok(None)
+    return utils.ok({"id": row["id"],
+                     "summary": json.loads(row["summary"]) if isinstance(row["summary"], str) else row["summary"],
+                     "details": json.loads(row["detail"]) if isinstance(row["detail"], str) else row["detail"],
+                     "created_by": row["created_by"], "created_at": str(row["created_at"])})
+
+@app.get("/api/v1/account-scan/history")
+async def account_scan_history(p=Depends(require_role('admin', 'auditor'))):
+    rows = utils.query("SELECT id, summary, created_by, created_at FROM account_scans ORDER BY id DESC LIMIT 20")
+    return utils.ok([{"id": r["id"], "created_by": r["created_by"], "created_at": str(r["created_at"]),
+                      "summary": json.loads(r["summary"]) if isinstance(r["summary"], str) else r["summary"]} for r in rows])
 
 # ============================================================
 # 13. LDAP 目录认证（M1）

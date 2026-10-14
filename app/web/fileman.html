@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>文件管理 · NextBastion</title>
+<style>
+  :root{--bg:#f5f5f7;--card:#fff;--line:#e8e8ed;--txt:#1d1d1f;--t3:#86868b;--pri:#0b3d62;--pri-l:#eef4f9;--ok:#389e0d;--ok-bg:#f6ffed;--warn:#d48806;--warn-bg:#fffbe6;--err:#cf1322;--err-bg:#fff1f0}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--txt);font:13px/1.6 -apple-system,"Noto Sans SC","Microsoft YaHei",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:10px 18px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+  header b{color:var(--pri);font-size:14.5px}
+  header .sub{color:var(--t3);font-size:12px}
+  header .sp{flex:1}
+  .btn{border:none;border-radius:9px;padding:6px 14px;font-size:12.5px;cursor:pointer;background:var(--pri);color:#fff}
+  .btn.ghost{background:#fff;color:var(--pri);border:1px solid var(--pri)}
+  .btn.warn{background:#fff;color:var(--err);border:1px solid var(--err)}
+  .btn.sm{padding:3px 10px;font-size:12px}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  main{flex:1;display:flex;min-height:0}
+  .tree{width:240px;background:#fff;border-right:1px solid var(--line);overflow:auto;padding:10px 8px;flex-shrink:0}
+  .tree .nd{padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tree .nd:hover{background:#f0f3f7}
+  .tree .nd.on{background:var(--pri-l);color:var(--pri);font-weight:600}
+  .main-col{flex:1;display:flex;flex-direction:column;min-width:0}
+  .toolbar{background:#fff;border-bottom:1px solid var(--line);padding:9px 16px;display:flex;gap:8px;align-items:center;flex-shrink:0}
+  .crumb{flex:1;font-size:12.5px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .crumb b{color:var(--txt)}
+  .crumb span{cursor:pointer}
+  .crumb span:hover{text-decoration:underline}
+  .files{flex:1;overflow:auto;background:#fff;padding:0 8px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{position:sticky;top:0;background:#fff;color:var(--t3);font-weight:500;text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:7px 8px;border-bottom:1px solid #f2f2f5}
+  tr.frow{cursor:pointer}
+  tr.frow:hover td{background:#fafbfc}
+  tr.sel td{background:var(--pri-l)}
+  .dir{color:#2f6fa7;font-weight:600}
+  .mono{font-family:Consolas,monospace}
+  .risk{background:var(--err-bg);color:var(--err);border-radius:5px;padding:0 6px;font-size:11px}
+  .statusbar{background:#fff;border-top:1px solid var(--line);padding:8px 16px;font-size:12px;color:var(--t3);flex-shrink:0;display:flex;gap:16px}
+  .prog-wrap{position:fixed;right:20px;bottom:20px;width:320px;background:#fff;border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:14px 16px;display:none;z-index:60}
+  .prog-wrap h4{font-size:13px;margin-bottom:8px}
+  .prog{height:7px;border-radius:4px;background:#eef1f5;overflow:hidden}
+  .prog i{display:block;height:100%;background:var(--pri);border-radius:4px;transition:width .2s}
+  .dlg-mask{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:70}
+  .dlg{background:#fff;border-radius:14px;padding:18px 20px;width:380px}
+  .dlg h4{margin-bottom:10px;font-size:14px}
+  .dlg .row{margin:8px 0}
+  .dlg label{font-size:12px;color:var(--t3)}
+  .dlg input{width:100%;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12.5px;margin-top:4px}
+  .empty{padding:60px;text-align:center;color:var(--t3)}
+  #drop-overlay{position:fixed;inset:0;background:rgba(11,61,98,.25);display:none;align-items:center;justify-content:center;z-index:80;font-size:18px;color:#fff;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <b>📁 文件管理</b>
+  <span class="sub" id="asset-info">连接中…</span>
+  <span class="sp"></span>
+  <button class="btn ghost sm" onclick="goHome()">← 返回资产</button>
+</header>
+<main>
+  <div class="tree" id="tree"><div style="color:var(--t3);font-size:11.5px;padding:4px 12px">目录树</div></div>
+  <div class="main-col">
+    <div class="toolbar">
+      <div class="crumb" id="crumb"></div>
+      <button class="btn ghost sm" id="btn-up" onclick="upClick()">⬆ 上传</button>
+      <button class="btn ghost sm" id="btn-dl" onclick="dlClick()" disabled>⬇ 下载</button>
+      <button class="btn ghost sm" onclick="renClick()">✏ 重命名</button>
+      <button class="btn warn sm" onclick="delClick()">🗑 删除</button>
+      <input type="file" id="file-input" style="display:none" onchange="doUpload(this.files[0])">
+    </div>
+    <div class="files">
+      <table>
+        <thead><tr><th style="width:30px"></th><th>名称</th><th style="width:90px">大小</th><th style="width:80px">权限</th><th style="width:90px">属主</th><th style="width:130px">修改时间</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="statusbar"><span id="stat">-</span><span id="selinfo"></span></div>
+  </div>
+</main>
+<div class="prog-wrap" id="prog">
+  <h4>⬆ 上传中 <span id="prog-file" style="font-weight:400;color:var(--t3)"></span></h4>
+  <div class="prog"><i id="prog-bar" style="width:0"></i></div>
+  <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11.5px;color:var(--t3)">
+    <span id="prog-pct">0%</span><span id="prog-speed"></span>
+  </div>
+</div>
+<div class="dlg-mask" id="ren-dlg">
+  <div class="dlg">
+    <h4>✏ 重命名</h4>
+    <div class="row"><label>新名称</label><input id="ren-new"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn ghost sm" onclick="closeDlg('ren-dlg')">取消</button>
+      <button class="btn sm" onclick="doRename()">确定</button>
+    </div>
+  </div>
+</div>
+<div id="drop-overlay">📎 拖拽文件到此处上传</div>
+<script>
+const qs=new URLSearchParams(location.search);
+const TOKEN=qs.get('token')||sessionStorage.getItem('nb_token');
+const ASSET_ID=+qs.get('asset'), ACCOUNT_ID=+qs.get('account');
+let FSID='',CWD='/',SEL=null,TREE_OPEN=new Set(['/']);
+function api(path,opt={}){
+  return fetch('/api/v1'+path,{...opt,headers:{'Authorization':'Bearer '+TOKEN,...(opt.headers||{})}}).then(async r=>{
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.detail||j.message||('HTTP '+r.status));
+    return j.data??j;
+  });
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function fmtSize(n){if(n==null)return '-';if(n<1024)return n+'B';const u=['KB','MB','GB'];let i=-1;do{n/=1024;i++}while(n>=1024&&i<2);return n.toFixed(1)+u[i]}
+function fmtTime(t){const d=new Date(t*1000);return d.toLocaleDateString('zh-CN')+' '+d.toTimeString().slice(0,5)}
+function goHome(){location.href='/index.html'}
+
+// ===== 会话建立 =====
+api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST'}).then(d=>{
+  FSID=d.fsid;
+  document.getElementById('asset-info').textContent=`${d.hostname} · ${d.ip}`;
+  ls('/');
+  renderTree();
+  setInterval(()=>api(`/files/${FSID}/list?path=${encodeURIComponent(CWD)}`).catch(()=>{}),300000); // 保活
+}).catch(e=>{
+  document.getElementById('rows').innerHTML=`<tr><td colspan="6" class="empty" style="color:var(--err)">❌ ${esc(e.message)}</td></tr>`;
+  document.getElementById('asset-info').textContent='连接失败';
+});
+
+async function ls(path){
+  CWD=path;
+  try{
+    const d=await api(`/files/${FSID}/list?path=${encodeURIComponent(path)}`);
+    SEL=null;updateSel();
+    document.getElementById('rows').innerHTML=d.items.map(it=>`
+      <tr class="frow" data-path="${esc(it.path)}" data-dir="${it.dir?1:0}" onclick="rowClick(this)" ondblclick="rowDbl(this)">
+        <td></td>
+        <td>${it.dir?'📁':'📄'} <span class="${it.dir?'dir':''}">${esc(it.name)}</span> ${isRisk(it.path)?'<span class="risk">高危</span>':''}</td>
+        <td class="mono">${it.dir?'-':fmtSize(it.size)}</td>
+        <td class="mono">${esc(it.mode)}</td>
+        <td class="mono">${it.uid}:${it.gid}</td>
+        <td class="mono">${fmtTime(it.mtime)}</td>
+      </tr>`).join('')||'<tr><td colspan="6" class="empty">空目录</td></tr>';
+    renderCrumb();
+    document.getElementById('stat').textContent=`${d.items.length} 项 · ${CWD}`;
+    renderTree();
+  }catch(e){
+    document.getElementById('rows').innerHTML=`<tr><td colspan="6" class="empty" style="color:var(--err)">❌ ${esc(e.message)}</td></tr>`;
+  }
+}
+function isRisk(p){return /^\/(etc|root|opt\/nextbastion)(\/|$)/.test(p)}
+function renderCrumb(){
+  const parts=CWD.split('/').filter(Boolean);
+  let acc='',html=`<span onclick="ls('/')">/</span> `;
+  for(const p of parts){acc+='/'+p;html+=`<b>${esc(p)}</b> <span onclick="ls('${esc(acc)}')">/</span> `}
+  document.getElementById('crumb').innerHTML=html;
+}
+let treeCache={};
+function renderTree(){
+  // 简化树：已浏览过的目录 + 根
+  const el=document.getElementById('tree');
+  el.innerHTML='<div style="color:var(--t3);font-size:11.5px;padding:4px 12px">目录树（浏览过的目录）</div>';
+  const dirs=Object.keys(treeCache).sort();
+  const mk=(p,depth)=>`<div class="nd ${p===CWD?'on':''}" style="padding-left:${12+depth*16}px" onclick="ls('${esc(p)}')">📁 ${esc(p.split('/').pop()||'/')}</div>`;
+  el.innerHTML+=mk('/',0);
+  for(const d of dirs){el.innerHTML+=mk(d,d.split('/').length-1)}
+}
+function rowClick(tr){
+  document.querySelectorAll('.frow').forEach(t=>t.classList.remove('sel'));
+  tr.classList.add('sel');
+  SEL={path:tr.dataset.path,dir:tr.dataset.dir==='1'};
+  updateSel();
+}
+function rowDbl(tr){if(tr.dataset.dir==='1'){ls(tr.dataset.path)}else{dlClick()}}
+function updateSel(){
+  document.getElementById('btn-dl').disabled=!SEL||SEL.dir;
+  document.getElementById('selinfo').textContent=SEL?`已选：${SEL.path}`:'';
+}
+function upClick(){document.getElementById('file-input').click()}
+
+// ===== 上传（分片 2MB + 进度） =====
+async function doUpload(file){
+  if(!file)return;
+  const dest=CWD+'/'+file.name;
+  const CHUNK=2*1024*1024;
+  const pw=document.getElementById('prog');
+  pw.style.display='block';
+  document.getElementById('prog-file').textContent=file.name;
+  const t0=performance.now();let offset=0,first=true;
+  while(offset<file.size){
+    const chunk=await file.slice(offset,offset+CHUNK).arrayBuffer();
+    await fetch(`/api/v1/files/${FSID}/upload?path=${encodeURIComponent(dest)}&offset=${offset}&append=${first?0:1}`,{
+      method:'POST',headers:{'Authorization':'Bearer '+TOKEN},body:chunk});
+    offset+=chunk.byteLength;first=false;
+    const pct=Math.round(offset/file.size*100);
+    document.getElementById('prog-bar').style.width=pct+'%';
+    document.getElementById('prog-pct').textContent=pct+'%';
+    const spd=(offset/1024/1024)/((performance.now()-t0)/1000);
+    document.getElementById('prog-speed').textContent=spd.toFixed(1)+' MB/s';
+  }
+  pw.style.display='none';
+  ls(CWD);
+}
+// 拖拽上传
+document.addEventListener('dragover',e=>{e.preventDefault();document.getElementById('drop-overlay').style.display='flex'});
+document.addEventListener('dragleave',e=>{if(!e.relatedTarget)document.getElementById('drop-overlay').style.display='none'});
+document.addEventListener('drop',e=>{e.preventDefault();document.getElementById('drop-overlay').style.display='none';if(e.dataTransfer.files[0])doUpload(e.dataTransfer.files[0])});
+
+// ===== 下载 =====
+function dlClick(){
+  if(!SEL||SEL.dir)return;
+  location.href=`/api/v1/files/${FSID}/download?path=${encodeURIComponent(SEL.path)}&token=${encodeURIComponent(TOKEN)}`;
+}
+// ===== 重命名 / 删除 =====
+let REN_OLD='';
+function renClick(){
+  if(!SEL){alert('请先选择一个文件/目录');return}
+  REN_OLD=SEL.path;
+  document.getElementById('ren-new').value=SEL.path.split('/').pop();
+  document.getElementById('ren-dlg').style.display='flex';
+}
+function closeDlg(id){document.getElementById(id).style.display='none'}
+async function doRename(){
+  const nn=document.getElementById('ren-new').value.trim();
+  if(!nn)return;
+  const parent=REN_OLD.split('/').slice(0,-1).join('/')||'/';
+  await api(`/files/${FSID}/op`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({op:'rename',old:REN_OLD,new:parent+'/'+nn})}).catch(e=>alert(e.message));
+  closeDlg('ren-dlg');ls(CWD);
+}
+async function delClick(){
+  if(!SEL){alert('请先选择一个文件/目录');return}
+  if(!confirm(`确认删除 ${SEL.path} ？\n（移入资产回收站 .nb-trash/，保留 30 天）`))return;
+  await api(`/files/${FSID}/op`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({op:'delete',path:SEL.path})}).catch(e=>alert(e.message));
+  ls(CWD);
+}
+</script>
+</body>
+</html>
