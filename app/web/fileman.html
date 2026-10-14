@@ -56,7 +56,9 @@
 <header>
   <b>📁 文件管理</b>
   <span class="sub" id="asset-info">连接中…</span>
+  <span id="conn-dot" style="width:9px;height:9px;border-radius:50%;background:#d48806;flex-shrink:0" title="连接状态"></span>
   <span class="sp"></span>
+  <button class="btn warn sm" id="btn-disc" onclick="disconnect()" style="display:none">⏏ 断开连接</button>
   <button class="btn ghost sm" onclick="goHome()">← 返回资产</button>
 </header>
 <main>
@@ -116,15 +118,35 @@ function goHome(){location.href='/index.html'}
 
 // ===== 会话建立 =====
 api(`/files/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST'}).then(d=>{
-  FSID=d.fsid;
+  FSID=d.fsid;CONNECTED=true;
   document.getElementById('asset-info').textContent=`${d.hostname} · ${d.ip}`;
+  const dot=document.getElementById('conn-dot');
+  dot.style.background='#389e0d'; dot.title='已连接';
+  document.getElementById('btn-disc').style.display='';
   ls('/');
   renderTree();
-  setInterval(()=>api(`/files/${FSID}/list?path=${encodeURIComponent(CWD)}`).catch(()=>{}),300000); // 保活
+  setInterval(()=>{ if(!CONNECTED)return; api(`/files/${FSID}/list?path=${encodeURIComponent(CWD)}`).catch(()=>{}); },300000); // 保活
 }).catch(e=>{
   document.getElementById('rows').innerHTML=`<tr><td colspan="6" class="empty" style="color:var(--err)">❌ ${esc(e.message)}</td></tr>`;
   document.getElementById('asset-info').textContent='连接失败';
+  const dot=document.getElementById('conn-dot');
+  dot.style.background='#cf1322'; dot.title='连接失败';
 });
+
+// ===== 断开连接 =====
+let CONNECTED=false;
+async function disconnect(){
+  if(!FSID)return;
+  if(!confirm('确认断开文件管理连接？'))return;
+  try{ await api(`/files/${FSID}/close`,{method:'POST'}); }catch(e){}
+  FSID='';CONNECTED=false;
+  const dot=document.getElementById('conn-dot');
+  dot.style.background='#86868b'; dot.title='已断开';
+  document.getElementById('btn-disc').style.display='none';
+  document.getElementById('asset-info').textContent='已断开连接';
+  document.getElementById('rows').innerHTML='<tr><td colspan="6" class="empty">🔌 连接已断开——关闭本页或返回资产重新连接</td></tr>';
+  document.querySelectorAll('.toolbar .btn').forEach(b=>b.disabled=true);
+}
 
 async function ls(path){
   CWD=path;

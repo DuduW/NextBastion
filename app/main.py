@@ -1405,6 +1405,19 @@ async def file_session(asset_id: int, account_id: int, p=Depends(auth)):
     write_audit(p['username'], 'fileman_open', 'asset', asset_id, {'fsid': fsid})
     return utils.ok({"fsid": fsid, "hostname": asset['hostname'], "ip": asset['ip']})
 
+@app.post("/api/v1/files/{fsid}/close")
+async def file_close(fsid: str, p=Depends(auth)):
+    """手动断开文件管理会话（释放 SSH/SFTP 连接）"""
+    s = fileman.FSESSIONS.get(fsid)
+    if not s:
+        return utils.ok(message="session not found (already closed)")
+    # 安全校验：仅会话属主或 admin 可断开
+    if s["user"]["id"] != p['sub'] and p.get('role') != 'admin':
+        raise HTTPException(403, "not your file session")
+    fileman.close_session(fsid)
+    write_audit(p['username'], 'fileman_close', 'asset', s["asset"]["id"], {'fsid': fsid})
+    return utils.ok(message="closed")
+
 @app.get("/api/v1/files/{fsid}/list")
 async def file_list(fsid: str, path: str = "/", p=Depends(auth)):
     try:
