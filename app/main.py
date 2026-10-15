@@ -34,8 +34,11 @@ async def unify_response(request: Request, call_next):
         return resp
     except HTTPException as e:
         return JSONResponse(utils.err(e.status_code, e.detail), status_code=e.status_code)
-    except Exception as e:
-        return JSONResponse(utils.err(500, f"internal error: {e}"), status_code=500)
+    except Exception:
+        # 安全修复：不回显异常原文（信息泄露）；记日志内部排查
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(utils.err(500, "internal error"), status_code=500)
 
 # ============================================================
 # 认证依赖
@@ -63,14 +66,34 @@ def require_role(*roles):
     return dep
 
 def client_ip(request: Request) -> str:
-    # 优先取 nginx 透传的真实客户端 IP（X-Real-IP），回退直连地址
-    xr = request.headers.get('X-Real-IP', '').strip()
-    if xr:
-        return xr
-    xff = request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-    if xff:
-        return xff
-    return request.client.host if request.client else 'unknown'
+    """安全取客户端 IP：仅当 TCP 对端属于可信代理（nginx 本机/回环）时才采信代理头，
+    且要求头值是单个合法 IP；其余（公网直连 8000、伪造头）一律用 socket 对端地址——防 XFF 绕过限流。"""
+    import ipaddress
+    peer = request.client.host if request.client else ''
+    def _valid_ip(s: str) -> bool:
+        try:
+            ipaddress.ip_address(s)
+            return True
+        except ValueError:
+            return False
+    try:
+        p = ipaddress.ip_address(peer) if peer else None
+        # 可信代理：回环（nginx 同机反代）；分离部署时在 config.py 定义 TRUSTED_PROXIES=[...]
+        try:
+            import config as _cfg
+            _trusted_list = list(getattr(_cfg, 'TRUSTED_PROXIES', []))
+        except Exception:
+            _trusted_list = []
+        trusted = bool(p and (p.is_loopback or peer in _trusted_list))
+    except ValueError:
+        trusted = False
+    if trusted:
+        for h in ('X-Real-IP', 'X-Forwarded-For'):
+            v = request.headers.get(h, '')
+            first = v.split(',')[0].strip() if h == 'X-Forwarded-For' else v.strip()
+            if first and _valid_ip(first):
+                return first
+    return peer or 'unknown'
 
 # R6: 审计异步落库（内存队列 + 后台线程批量写，同步路径零 DB 等待）
 _AUDIT_Q = __import__("queue").Queue(maxsize=5000)
@@ -221,9 +244,16 @@ async def login(request: Request):
 
 @app.post("/api/v1/auth/refresh")
 async def refresh(request: Request):
-    body = await request.json()
+    # 安全修复：body 缺失/畸形 JSON 一律 401（不进 json 解析、不回显异常原文）
     try:
-        payload = utils.decode_token(body.get('refresh_token', ''))
+        raw = await request.body()
+        body = json.loads(raw) if raw else {}
+        if not isinstance(body, dict):
+            raise ValueError
+    except Exception:
+        raise HTTPException(401, "invalid refresh token")
+    try:
+        payload = utils.decode_token(body.get('refresh_token') or '')
         assert payload.get('kind') == 'refresh'
     except Exception:
         raise HTTPException(401, "invalid refresh token")
