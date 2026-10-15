@@ -56,7 +56,7 @@
   .badge-purple{background:var(--badge-purple-bg);color:var(--badge-purple-tx)}.badge-gray{background:var(--badge-gray-bg);color:var(--badge-gray-tx)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th{text-align:left;font-size:12px;color:var(--text-3);font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
-  td{padding:10px 12px;border-bottom:1px solid #f2f2f7}
+  td{padding:10px 12px;border-bottom:1px solid var(--border)}
   tbody tr:hover{background:#fafbfc}
   .mono{font-family:var(--mono);font-size:12.5px}
   .search-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
@@ -96,8 +96,8 @@
 
 /* 规则集编辑表格 */
 .rule-table{width:100%;border-collapse:collapse;font-size:12px}
-.rule-table th{color:#6c7086;font-weight:500;padding:4px 6px;text-align:left;border-bottom:1px solid #dfe2ea}
-.rule-table td{padding:4px 4px;border-bottom:1px solid #eceef3}
+  .rule-table th{color:var(--text-3);font-weight:500;padding:4px 6px;text-align:left;border-bottom:1px solid var(--border)}
+  .rule-table td{padding:4px 4px}
 .rule-table input,.rule-table select{width:100%;padding:6px 8px;border:1px solid #d5d9e2;border-radius:6px;background:var(--surface);font-size:12px;box-sizing:border-box;color:#1e2130}
 .rule-table input:focus,.rule-table select:focus{outline:none;border-color:#0b3d62;box-shadow:0 0 0 2px rgba(11,61,98,.12)}
 
