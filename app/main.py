@@ -72,12 +72,30 @@ def client_ip(request: Request) -> str:
         return xff
     return request.client.host if request.client else 'unknown'
 
-def write_login_log(username, ip, result, reason=''):
+# R6: 审计异步落库（内存队列 + 后台线程批量写，同步路径零 DB 等待）
+_AUDIT_Q = __import__("queue").Queue(maxsize=5000)
+_AUDIT_STATS = {"written": 0, "dropped": 0}
+
+def _audit_worker():
+    while True:
+        sql, args = _AUDIT_Q.get()
+        try:
+            utils.execute(sql, args)
+            _AUDIT_STATS["written"] += 1
+        except Exception:
+            pass
+        _AUDIT_Q.task_done()
+
+def _audit_enqueue(sql, args):
     try:
-        utils.execute("INSERT INTO login_logs (username, client_ip, result, reason) VALUES (%s,%s,%s,%s)",
-                      (username, ip, result, reason))
+        _AUDIT_Q.put_nowait((sql, args))
     except Exception:
-        pass
+        _AUDIT_STATS["dropped"] += 1
+
+def write_login_log(username, ip, result, reason=''):
+    # R6: 异步入队（登录高频路径不再同步写库）
+    _audit_enqueue("INSERT INTO login_logs (username, client_ip, result, reason) VALUES (%s,%s,%s,%s)",
+                   (username, ip, result, reason))
     # F5: Syslog 埋点（登录事件）
     try:
         import syslog_fwd
@@ -88,11 +106,12 @@ def write_login_log(username, ip, result, reason=''):
         pass
 
 def write_audit(actor, action, target_type='', target_id='', detail=None):
-    try:
-        utils.execute("INSERT INTO audit_logs (actor, action, target_type, target_id, detail) VALUES (%s,%s,%s,%s,%s)",
-                      (actor, action, target_type, str(target_id), json.dumps(detail or {}, ensure_ascii=False)))
-    except Exception:
-        pass
+    # R6: 异步入队
+    _audit_enqueue("INSERT INTO audit_logs (actor, action, target_type, target_id, detail) VALUES (%s,%s,%s,%s,%s)",
+                   (actor, action, target_type, str(target_id), json.dumps(detail or {}, ensure_ascii=False)))
+
+import threading as _th
+_th.Thread(target=_audit_worker, daemon=True, name="nb-audit").start()
 
 # ============================================================
 # 1. 认证 API
@@ -533,6 +552,9 @@ async def delete_asset(aid: int, p=Depends(require_role('admin'))):
 
 @app.get("/api/v1/assets/{aid}/accounts")
 async def asset_accounts(aid: int, p=Depends(auth)):
+    # R1: 资产不存在返回 404（语义统一：不存在=404/无权=403/失效=410）
+    if not utils.query("SELECT id FROM assets WHERE id=%s", (aid,), one=True):
+        raise HTTPException(404, "asset not found")
     # IM-02: 账号清单仅对授权用户/角色开放（admin/auditor 或命中授权策略）
     if p['role'] not in ('admin', 'auditor'):
         user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
@@ -590,6 +612,29 @@ async def update_policy(pid: int, request: Request, p=Depends(require_role('admi
                    json.dumps(b.get('rdp_session_config')) if 'rdp_session_config' in b else row['rdp_session_config'],
                    b.get('valid_until') or row['valid_until'], b.get('is_enabled', row['is_enabled']), pid))
     write_audit(p['username'], 'update_policy', 'policy', pid, {'name': b.get('name')})
+    # R12: 字段级 diff 审计（before/after 摘要，不含凭据）
+    try:
+        _diff = {}
+        for f_old, f_new, label in [
+            (row['name'], b.get('name'), 'name'),
+            (row['account_pattern'], b.get('account_pattern'), 'account_pattern'),
+            (row['asset_or_node_type'] + ':' + str(row['asset_or_node_id']),
+             (b.get('asset_type') or row['asset_or_node_type']) + ':' + str(b.get('asset_id') or row['asset_or_node_id']), 'target'),
+            (str(row['is_enabled']), str(b.get('is_enabled', row['is_enabled'])), 'enabled')]:
+            if f_new is not None and str(f_old) != str(f_new):
+                _diff[label] = {'from': str(f_old)[:60], 'to': str(f_new)[:60]}
+        for k in ('sftp', 'clipboard', 'drive', 'watermark'):
+            try:
+                _old_cfg = json.loads(row['rdp_session_config'] or '{}') or {}
+                _new_cfg = json.loads(b.get('rdp_session_config') or '{}') if 'rdp_session_config' in b else _old_cfg
+                if str(_old_cfg.get(k)) != str(_new_cfg.get(k)):
+                    _diff[f'cap.{k}'] = {'from': _old_cfg.get(k), 'to': _new_cfg.get(k)}
+            except Exception:
+                pass
+        if _diff:
+            write_audit(p['username'], 'policy_diff', 'policy', pid, _diff)
+    except Exception:
+        pass
     return utils.ok(message="updated")
 
 @app.post("/api/v1/policies/{pid}/toggle")
@@ -898,7 +943,13 @@ async def search_commands(request: Request, p=Depends(require_role('admin','audi
     where = """ FROM command_logs c JOIN users u ON c.user_id=u.id JOIN assets a ON c.asset_id=a.id WHERE 1=1"""
     args = []
     if q:
-        where += " AND c.command_text LIKE %s"; args.append(f"%{q}%")
+        # R11: 优先 FULLTEXT（ft_idx 命中时快 10x+），布尔模式语法错误自动回退 LIKE
+        try:
+            utils.query("SELECT id FROM command_logs WHERE MATCH(command_text) AGAINST(%s IN BOOLEAN MODE) LIMIT 1", (q,))
+            where += " AND MATCH(c.command_text) AGAINST(%s IN BOOLEAN MODE)"
+        except Exception:
+            where += " AND c.command_text LIKE %s"
+        args.append(q)
     if action:
         where += " AND c.action=%s"; args.append(action)
     total = utils.query("SELECT COUNT(*) AS n" + where, args, one=True)['n']
@@ -929,6 +980,9 @@ async def rdp_token(request: Request, p=Depends(auth)):
     b = await request.json()
     asset_id, account_id = b.get('asset_id'), b.get('account_id')
     user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
+    asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
+    if not asset:
+        raise HTTPException(404, "asset not found")
     # ---- account_id=0：临时凭据（ct=ticket，用户自输账密） ----
     temp_login = temp_pass = None
     if account_id == 0:
@@ -944,6 +998,14 @@ async def rdp_token(request: Request, p=Depends(auth)):
     pol = check_access(user, asset_id, acc['username'])
     if not pol:
         raise HTTPException(403, "无授权访问该资产")
+    # R5: RDP 连接前置 TCP 预检——不通时给明确提示（而非黑屏超时）
+    if asset.get("protocol") == "rdp":
+        import socket as _sock
+        try:
+            _s = _sock.socket(); _s.settimeout(2.5)
+            _s.connect((asset["ip"], asset["rdp_port"] or 3389)); _s.close()
+        except Exception:
+            raise HTTPException(502, f"目标 {asset['ip']}:{asset['rdp_port'] or 3389} 网络不可达——请联系管理员放行堡垒机到该地址的 RDP 端口")
     import jwt as pyjwt
     from config import JWT_SECRET
     rdp_jti = uuid.uuid4().hex
@@ -1068,14 +1130,24 @@ async def issue_temp_cred(request: Request, p=Depends(auth)):
     asset_id, login, password = b.get("asset_id"), (b.get("login") or "").strip(), b.get("password") or ""
     if not (asset_id and login and password):
         raise HTTPException(400, "asset_id/login/password 必填")
+    # R2: 防暴力猜测——同用户 10 分钟内签发 ≥10 次限流 10 分钟（签发时无法验密码，按签发频次限流自动化滥用）
+    _key = f"tc:{p['sub']}"
+    _now = time.time()
+    _fails = [t for t in _TEMP_FAILS.get(_key, []) if _now - t < 600]
+    if len(_fails) >= 10:
+        raise HTTPException(429, "凭据签发过于频繁，请 10 分钟后再试")
+    _fails.append(_now); _TEMP_FAILS[_key] = _fails
     # 授权校验：账号模式必须匹配（否则可绕过账号维度授权）
     user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
     pol = check_access(user, asset_id, login)
     if not pol:
+        _TEMP_FAILS.pop(_key, None)   # 授权失败不占签发额度（计数已在上方）
         raise HTTPException(403, "无该资产的访问授权（或授权账号模式不匹配）")
     ticket = _make_temp_ticket(user['id'], asset_id, login, password)
     write_audit(user['username'], 'temp_cred', 'asset', asset_id, {'login': login})
     return utils.ok({"ticket": ticket, "expires_in": 600})
+
+_TEMP_FAILS = {}   # uid -> [fail_ts,...]（R2 限流，进程内）
 
 @app.websocket("/ws/terminal/{asset_id}/{account_id}")
 async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str = "", ct: str = ""):
@@ -1299,6 +1371,14 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
         dur = int(time.time() - t0)
         utils.execute("UPDATE sessions SET status=%s, ended_at=NOW(), duration_s=%s WHERE id=%s",
                       ('killed' if sid in ACTIVE_KILL else 'closed', dur, sid))
+        # R9: 会话关闭事件 Syslog（含时长，ELK 可算会话完整性）
+        try:
+            import syslog_fwd
+            syslog_fwd.emit("session_close", f"SSH 会话结束: {user['username']} → {asset['hostname']}（{dur}s）",
+                            {"actor": user['username'], "asset": asset['hostname'], "session": sid,
+                             "duration_s": dur, "asset_id": asset_id})
+        except Exception:
+            pass
         try:
             await ws.close()
         except Exception:
@@ -1383,6 +1463,16 @@ async def ws_live(ws: WebSocket, sid: str, token: str = ""):
         pass
 
 # ---- P1-6 CSV 批量导入资产 ----
+@app.get("/api/v1/assets/import/template")
+async def import_template(p=Depends(require_role('admin'))):
+    """R10: CSV 导入模板下载"""
+    from fastapi.responses import PlainTextResponse
+    csv = ("hostname,ip,protocol,os_type,node_name,account,password,ssh_port,rdp_port\n"
+           "web-nginx-01,172.18.1.10,ssh,CentOS 7.9,生产区,root,,22,\n"
+           "win-jump-02,192.168.30.55,rdp,Windows Server 2022,测试区,administrator,,,\"3389\"\n")
+    return PlainTextResponse(csv, media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=nb_assets_template.csv"})
+
 @app.post("/api/v1/assets/import")
 async def import_assets(request: Request, p=Depends(require_role('admin'))):
     """CSV 格式: hostname,ip,protocol,os_type,node_name,account,password,ssh_port,rdp_port"""
@@ -1667,6 +1757,14 @@ async def file_upload(fsid: str, request: Request, p=Depends(auth)):
         raise HTTPException(410, "文件会话已过期")
     except Exception as e:
         raise HTTPException(500, str(e)[:100])
+
+@app.get("/api/v1/files/{fsid}/stat")
+async def file_stat(fsid: str, path: str, p=Depends(auth)):
+    """R4: 远端文件元信息（断点续传）"""
+    try:
+        return utils.ok(await fileman.stat_file(fsid, path))
+    except KeyError:
+        raise HTTPException(410, "文件会话已过期")
 
 @app.get("/api/v1/files/{fsid}/download")
 async def file_download(fsid: str, path: str, p=Depends(auth)):

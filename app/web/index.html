@@ -170,7 +170,7 @@ async function api(path, opts={}){
   const r = await fetch(API+path, opts);
   if(r.status===401 && path!=='/auth/login'){logout();throw new Error('未认证')}
   const j = await r.json().catch(()=>({code:r.status,message:'HTTP '+r.status}));
-  if(r.status>=400) throw new Error(j.message||('HTTP '+r.status));
+  if(r.status>=400) throw new Error(j.detail||j.message||('HTTP '+r.status));
   return j.data;
 }
 const badge=(t,c)=>`<span class="badge badge-${c}">${t}</span>`;
@@ -657,7 +657,14 @@ async acctscan(){
     ${Object.entries(catName).map(([k,n])=>`<div><div style="font-size:24px;font-weight:700;color:var(--primary)">${cats[k]||0}</div><div class="sub">${n}</div></div>`).join('')}
   </div>
   <div class="card"><div style="font-weight:600;margin-bottom:8px">🚨 风险发现（特权私建 / 闲置）</div>
-    ${hrRows?`<table><thead><tr><th>资产</th><th>账号</th><th>UID</th><th>Shell</th><th>最后登录</th><th>风险</th></tr></thead><tbody>${hrRows}</tbody></table>`:'<div class="empty">无风险发现 ✅</div>'}</div>`;
+    ${hrRows?`<table><thead><tr><th>资产</th><th>账号</th><th>UID</th><th>Shell</th><th>最后登录</th><th>风险</th></tr></thead><tbody>${hrRows}</tbody></table>`:'<div class="empty">无风险发现 ✅</div>'}</div>
+  <div class="card"><div style="font-weight:600;margin-bottom:8px">📁 按资产查看明细（R8 下钻）</div>
+    ${det.map((d,i)=>`<details style="border-bottom:1px solid var(--border);padding:6px 2px"${i===0?' open':''}>
+      <summary style="cursor:pointer;font-weight:600">${d.error?'⚠️':'📁'} ${esc(d.asset)} <span class="mono" style="color:var(--text-3);font-weight:400">${esc(d.ip)}</span> ${d.error?`<span style="color:var(--red);font-size:12px">${esc(d.error)}</span>`:`<span class="sub" style="font-size:12px">（${(d.users||[]).length} 账号）</span>`}</summary>
+      ${d.error?'':`<table style="margin:6px 0 10px"><thead><tr><th>账号</th><th>UID</th><th>Shell</th><th>最后登录</th><th>分类</th></tr></thead><tbody>
+        ${(d.users||[]).map(u=>`<tr><td class="mono">${esc(u.name)}</td><td>${u.uid}</td><td class="mono">${esc(u.shell)}</td><td>${esc(u.last||'—')}</td><td>${catName[u.category]||u.category}</td></tr>`).join('')}
+      </tbody></table>`}
+    </details>`).join('')||'<div class="empty">无明细</div>'}</div>`;
 }
 };
 
@@ -1459,12 +1466,19 @@ async function rdpConnect(assetId){
   }
   try{
     await openRdp(assetId,accs[0].id);
-  }catch(e){toast('RDP 授权失败：'+e.message)}
+  }catch(e){/* openRdp 已 toast 详情 */}
 }
 async function openRdp(assetId,accId,ct){
-  const d=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
-    asset_id:assetId,account_id:accId,...(ct?{ct}:{}) ,
-    screen_width:1024,screen_height:768})});
+  let d;
+  try{
+    d=await api('/rdp/tokens',{method:'POST',body:JSON.stringify({
+      asset_id:assetId,account_id:accId,...(ct?{ct}:{}) ,
+      screen_width:1024,screen_height:768})});
+  }catch(e){
+    // R5 预检 502 等错误带明确 detail——直接展示
+    toast(e.message||'RDP 连接失败');
+    throw e;
+  }
   window.__rdpCtx={assetId,accId,ct:ct||null};
   const clip=(d.rdp_config&&d.rdp_config.clipboard===true)?'#clip=1':'';
   const url=`/rdp.html?token=${encodeURIComponent(d.token)}&user=${encodeURIComponent(USER.username)}${clip}`;
