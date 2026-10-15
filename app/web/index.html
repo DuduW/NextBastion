@@ -355,12 +355,12 @@ async myassets(){
 async assets(){
   const [rows,nodes]=await Promise.all([api('/assets'),api('/nodes')]);
   window.__nodes=nodes;
-  const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
+  const tr=rows.map(a=>`<tr data-aid="${a.id}" data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td style="width:34px">${USER.role==='admin'?`<input type="checkbox" class="row-sel" data-aid="${a.id}" onchange="selAsset(this,${a.id})">`:''}</td><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
     <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
     <td>${protoBadge(a.protocol)}</td><td class="mono">${a.protocol}:${a.protocol==='rdp'?a.rdp_port:a.ssh_port}</td>
     <td>${a.account?`<span class="mono">${esc(a.account)}</span>${a.account_count>1?` <span class="badge badge-gray">+${a.account_count-1}</span>`:''}${badge('已托管','green')}`:badge('未托管','red')}</td>
     <td>${esc(a.node_name)}</td>
-    <td>${a.status==='online'?badge('在线','green'):a.status==='offline'?badge('离线','red'):badge('未知','gray')}</td>
+    <td class="st-cell" id="st-${a.id}">${a.status==='online'?badge('在线','green'):a.status==='offline'?badge('离线','red'):badge('未知','gray')}</td>
     <td style="white-space:nowrap">
       <button class="btn btn-sm btn-ghost" onclick="probeAsset(${a.id},this)">探测</button>
       ${USER.role==='admin'?`
@@ -380,7 +380,14 @@ async assets(){
       </div>
     </div>
     <div class="hint" id="a-count" style="margin:6px 2px 0"></div>
-  <div id="assets-table">${rows.length?`<table><thead><tr><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>端口</th><th>托管账号</th><th>节点</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无资产，点击右上角新建</div>'}</div></div>`;
+    <div id="batch-bar" style="display:none;gap:8px;align-items:center;margin:10px 0 0;padding:10px 12px;background:var(--primary-light);border-radius:10px;flex-wrap:wrap">
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer"><input type="checkbox" id="sel-all" onchange="selAllAssets(this)"> <b>全选</b></label>
+      <span class="hint" id="sel-count">已选 0 台</span>
+      <span style="flex:1"></span>
+      ${USER.role==='admin'?`<button class="btn btn-ghost" onclick="batchProbe()">📡 批量探测</button>
+      <button class="btn btn-danger" onclick="batchDelAssets()">🗑 批量删除</button>`:''}
+    </div>
+  <div id="assets-table">${rows.length?`<table id="a-tbl"><thead><tr><th style="width:34px"></th><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>端口</th><th>托管账号</th><th>节点</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无资产，点击右上角新建</div>'}</div></div>`;
 },
 async policies(){
   if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
@@ -771,18 +778,6 @@ function myAssetsProto(btn){
   window.__myAssetsProto=btn.dataset.p;
   myAssetsFilter();
 }
-async function loadAssetsQ(){const q=document.getElementById('a-q').value;
-  const rows=await api('/assets'+(q?'?q='+encodeURIComponent(q):''));
-  const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
-    <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
-    <td>${protoBadge(a.protocol)}</td><td class="mono">${a.protocol}:${a.protocol==='rdp'?a.rdp_port:a.ssh_port}</td><td>${esc(a.node_name)}</td>
-    <td style="white-space:nowrap">
-      ${USER.role==='admin'?`
-      <button class="btn btn-sm btn-ghost" onclick="assetForm(${a.id})">编辑</button>
-      <button class="btn btn-sm btn-danger" onclick="delAsset(${a.id},'${esc(a.hostname)}')">删除</button>`:'-'}
-    </td></tr>`).join('');
-  document.getElementById('assets-table').innerHTML=tr?`<table><thead><tr><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>端口</th><th>节点</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无匹配</div>';
-  assetsFilter();}
 function loadPage(){go(document.querySelector('.nav-item.active').dataset.page)}
 
 // ============ 资产表单（新建/编辑） ============
@@ -897,6 +892,55 @@ async function delAsset(id,name){
   try{await api('/assets/'+id,{method:'DELETE'});toast('已删除：'+name);loadPage()}
   catch(e){toast('删除失败：'+e.message)}
 }
+
+// ===== 批量选择/探测/删除 =====
+function selAsset(cb,aid){
+  const bar=document.getElementById('batch-bar');
+  const n=document.querySelectorAll('#assets-table input.row-sel:checked').length;
+  document.getElementById('sel-count').textContent=`已选 ${n} 台`;
+  bar.style.display=n?'flex':'none';
+  const all=document.getElementById('sel-all');
+  const total=document.querySelectorAll('#assets-table input.row-sel').length;
+  if(all)all.checked=n>0&&n===total;
+}
+function selAllAssets(cb){
+  // 只勾选当前可见行（受搜索/分页影响）
+  document.querySelectorAll('#assets-table tbody tr').forEach(tr=>{
+    if(tr.style.display!=='none'){const c=tr.querySelector('input.row-sel');if(c)c.checked=cb.checked;}
+  });
+  selAsset();
+}
+function selectedAids(){
+  return [...document.querySelectorAll('#assets-table input.row-sel:checked')].map(c=>+c.dataset.aid);
+}
+async function batchProbe(){
+  const aids=selectedAids();
+  if(!aids.length){toast('请先勾选资产');return}
+  toast(`开始探测 ${aids.length} 台…`);
+  let ok=0,fail=0;
+  for(const aid of aids){
+    const cell=document.getElementById('st-'+aid);
+    if(cell)cell.innerHTML=badge('探测中','gray');
+    try{const r=await api(`/assets/${aid}/probe`,{method:'POST'});ok++;
+      if(cell)cell.innerHTML=r.status==='online'?badge('在线','green'):badge('离线','red');}
+    catch(e){fail++;if(cell)cell.innerHTML=badge('探测失败','red');}
+  }
+  toast(`探测完成：${ok} 在线相关 / ${fail} 失败`);
+}
+async function batchDelAssets(){
+  const aids=selectedAids();
+  if(!aids.length){toast('请先勾选资产');return}
+  const names=aids.map(aid=>{const tr=document.querySelector(`tr[data-aid="${aid}"]`);return tr?tr.querySelector('td b').textContent:''});
+  if(!confirm(`确认删除 ${aids.length} 台资产？\n${names.join('、')}\n其托管账号与授权将一并移除（审计保留）。`))return;
+  let ok=0,fail=[];
+  for(const aid of aids){
+    try{await api('/assets/'+aid,{method:'DELETE'});ok++;}
+    catch(e){fail.push(names[aids.indexOf(aid)]||aid);}
+  }
+  toast(fail.length?`删除 ${ok} 台，失败 ${fail.length} 台：${fail.join('、')}`:`已删除 ${ok} 台`);
+  loadPage();
+}
+
 async function unManageAccount(id,account){
   if(!confirm(`确认取消托管账号「${account}」？\n托管凭据将被删除（历史会话与审计保留）；之后连接该资产需手动输入账密。`))return;
   try{
