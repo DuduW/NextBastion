@@ -20,6 +20,8 @@
   .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#a6adc8;font-size:14px;flex-direction:column;gap:10px}
   #watermark{position:absolute;right:16px;bottom:14px;z-index:99;color:rgba(255,255,255,.32);font-size:22px;font-weight:600;font-family:'Noto Sans SC',sans-serif;pointer-events:none}
   #watermark2{position:absolute;left:16px;top:12px;z-index:99;color:rgba(255,255,255,.22);font-size:18px;font-weight:600;font-family:'Noto Sans SC',sans-serif;pointer-events:none}
+  /* 黑白显示模式（与主界面联动）*/
+  body.dark{--bg:#121417;--card:#1b1e23;--text:#e8eaed;--text-2:#9aa0a6;--text-3:#6b7075;--border:#2c3036;filter:none}
 </style>
 </head>
 <body>
@@ -43,6 +45,9 @@
 
 <script src="vendor/guacamole-common.js?v=155"></script>
 <script>
+// 主题联动（与主界面同 localStorage）
+try{if(localStorage.getItem('nb_theme')==='dark')document.body.classList.add('dark')}catch(e){}
+
 const qs=new URLSearchParams(location.search);
 const TOKEN=qs.get('token'), USER=qs.get('user')||'';
 // 初始分辨率（与本次会话一致，用于 select 回显）

@@ -50,6 +50,8 @@
   .dlg input{width:100%;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12.5px;margin-top:4px}
   .empty{padding:60px;text-align:center;color:var(--t3)}
   #drop-overlay{position:fixed;inset:0;background:rgba(11,61,98,.25);display:none;align-items:center;justify-content:center;z-index:80;font-size:18px;color:#fff;font-weight:600}
+  /* 黑白显示模式（与主界面联动）*/
+  body.dark{--bg:#121417;--card:#1b1e23;--text:#e8eaed;--text-2:#9aa0a6;--text-3:#6b7075;--border:#2c3036;filter:none}
 </style>
 </head>
 <body>
@@ -100,6 +102,9 @@
 </div>
 <div id="drop-overlay">📎 拖拽文件到此处上传</div>
 <script>
+// 主题联动（与主界面同 localStorage）
+try{if(localStorage.getItem('nb_theme')==='dark')document.body.classList.add('dark')}catch(e){}
+
 const qs=new URLSearchParams(location.search);
 const TOKEN=qs.get('token')||sessionStorage.getItem('nb_token');
 const ASSET_ID=+qs.get('asset'), ACCOUNT_ID=+qs.get('account');
@@ -240,15 +245,26 @@ function updateSel(){
 }
 function upClick(){document.getElementById('file-input').click()}
 
-// ===== 上传（分片 2MB + 进度） =====
+// ===== 上传（分片 2MB + 进度 + R4 断点续传） =====
 async function doUpload(file){
   if(!file)return;
   const dest=CWD+'/'+file.name;
   const CHUNK=2*1024*1024;
+  // R4: 探查远端已存在大小 → 同名续传（mtime 较新才续，避免脏数据）
+  let offset=0,first=true;
+  try{
+    const st=await api(`/files/${FSID}/stat?path=${encodeURIComponent(dest)}`);
+    if(st.exists&&!st.is_dir&&st.size>0&&st.size<file.size){
+      const keep=confirm(`远端已存在 ${fmtSize(st.size)}（共 ${fmtSize(file.size)}）——\n确定从断点续传吗？（取消则重新上传）`);
+      if(keep){offset=st.size;first=false}
+    }else if(st.exists&&st.size>=file.size){
+      if(!confirm(`远端已存在同名且不小于本地的文件——覆盖重传吗？`))return;
+    }
+  }catch(e){}
   const pw=document.getElementById('prog');
   pw.style.display='block';
-  document.getElementById('prog-file').textContent=file.name;
-  const t0=performance.now();let offset=0,first=true;
+  document.getElementById('prog-file').textContent=file.name+(offset?`（续传自 ${fmtSize(offset)}）`:'');
+  const t0=performance.now();
   while(offset<file.size){
     const chunk=await file.slice(offset,offset+CHUNK).arrayBuffer();
     const isLast=offset+chunk.byteLength>=file.size;

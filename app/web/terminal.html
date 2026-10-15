@@ -14,6 +14,8 @@
   .btn-f{background:#45475a;color:#cdd6f4;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-family:inherit}
   .btn-f:hover{background:#585b70}
   #term-wrap{flex:1;padding:6px;min-height:0}
+  /* 黑白显示模式（与主界面联动）*/
+  body.dark{--bg:#121417;--card:#1b1e23;--text:#e8eaed;--text-2:#9aa0a6;--text-3:#6b7075;--border:#2c3036;filter:none}
 </style>
 </head>
 <body>
@@ -22,6 +24,9 @@
 <script src="vendor/xterm.js"></script>
 <script src="vendor/xterm-addon-fit.js"></script>
 <script>
+// 主题联动（与主界面同 localStorage）
+try{if(localStorage.getItem('nb_theme')==='dark')document.body.classList.add('dark')}catch(e){}
+
 const qs=new URLSearchParams(location.search);
 const TOKEN=qs.get('token'),ASSET=qs.get('asset'),ACCOUNT=qs.get('account'),USER=qs.get('user')||'';
 const term=new Terminal({

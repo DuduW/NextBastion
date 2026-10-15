@@ -6,11 +6,14 @@
 <title>NextBastion 堡垒机</title>
 <style>
   :root{--bg:#f5f5f7;--card:#fff;--primary:#0b3d62;--primary-hover:#14548a;--primary-light:#e8f0f7;--text:#1d1d1f;--text-2:#6e6e73;--text-3:#86868b;--border:#e5e5ea;--green:#34c759;--red:#ff3b30;--orange:#ff9500;--serif:"Noto Serif SC","Songti SC",serif;--sans:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+  /* 黑白显示模式（默认浅色）*/
+  body{--surface:#fff;--surface-hover:#f5f5f7;--badge-green-bg:#e8f5e9;--badge-green-tx:#1b7a3d;--badge-red-bg:#fdecea;--badge-red-tx:#c0392b;--badge-orange-bg:#fff3e0;--badge-orange-tx:#b26a00;--badge-purple-bg:#f3e8ff;--badge-purple-tx:#722ed1;--badge-gray-bg:#f0f1f3;--badge-gray-tx:#666}
+  body.dark{--bg:#121417;--card:#1b1e23;--surface:#1b1e23;--surface-hover:#24282e;--text:#e8eaed;--text-2:#9aa0a6;--text-3:#6b7075;--border:#2c3036;--primary:#5b9bd5;--primary-hover:#7ab3e0;--primary-light:#1f2b38;--badge-green-bg:#17301f;--badge-green-tx:#5fbf7a;--badge-red-bg:#3a1f22;--badge-red-tx:#e57373;--badge-orange-bg:#382a17;--badge-orange-tx:#e0a458;--badge-purple-bg:#2a2038;--badge-purple-tx:#b78ce0;--badge-gray-bg:#24272c;--badge-gray-tx:#9aa0a6}
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:var(--bg);font-family:var(--sans);color:var(--text);font-size:14px}
   button{font-family:inherit;cursor:pointer}
   #login-page{position:fixed;inset:0;z-index:100;background:linear-gradient(135deg,#0b3d62 0%,#14548a 55%,#1a6fb5 100%);display:flex;align-items:center;justify-content:center}
-  .login-card{background:#fff;border-radius:20px;padding:44px 40px;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .login-card{background:var(--surface);border-radius:20px;padding:44px 40px;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
   .login-logo{display:flex;align-items:center;gap:12px;margin-bottom:8px}
   .login-logo .mark{width:44px;height:44px;border-radius:12px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px}
   .login-logo h1{font-family:var(--serif);font-size:22px}
@@ -23,13 +26,13 @@
   .btn-login:hover{background:var(--primary-hover)}
   #app{display:none;min-height:100vh}
   .layout{display:flex;min-height:100vh}
-  .sidebar{width:232px;background:#fff;border-right:1px solid var(--border);padding:20px 14px;flex:none;display:flex;flex-direction:column}
+  .sidebar{width:232px;background:var(--card);border-right:1px solid var(--border);padding:20px 14px;flex:none;display:flex;flex-direction:column}
   .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 20px}
   .brand .mark{width:36px;height:36px;border-radius:10px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px}
   .brand b{font-family:var(--serif);font-size:16.5px}
   .nav-group{font-size:11px;color:var(--text-3);padding:14px 12px 6px;letter-spacing:1px}
   .nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;color:var(--text-2);cursor:pointer;font-size:13.5px;margin-bottom:2px}
-  .nav-item:hover{background:#f5f5f7;color:var(--text)}
+  .nav-item:hover{background:var(--surface-hover);color:var(--text)}
   .nav-item.active{background:var(--primary-light);color:var(--primary);font-weight:600}
   .nav-item .ic{width:18px;text-align:center;font-size:15px}
   .spacer{flex:1}
@@ -44,20 +47,20 @@
   .card{background:var(--card);border-radius:16px;padding:22px 24px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
   .btn{padding:8px 16px;border-radius:10px;border:none;font-size:13px;font-weight:500}
   .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-hover)}
-  .btn-ghost{background:#fff;color:var(--text-2);border:1px solid var(--border)}
+  .btn-ghost{background:var(--surface);color:var(--text-2);border:1px solid var(--border)}
   .btn-danger{background:#fdecea;color:var(--red)}
   .btn-sm{padding:4px 12px;font-size:12px;border-radius:8px}
   .badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11.5px;font-weight:500}
-  .badge-green{background:#e8f5e9;color:#1b7a3d}.badge-red{background:#fdecea;color:#c0392b}
-  .badge-orange{background:#fff3e0;color:#b26a00}.badge-blue{background:var(--primary-light);color:var(--primary)}
-  .badge-purple{background:#f3e8ff;color:#722ed1}.badge-gray{background:#f0f1f3;color:#666}
+  .badge-green{background:var(--badge-green-bg);color:var(--badge-green-tx)}.badge-red{background:var(--badge-red-bg);color:var(--badge-red-tx)}
+  .badge-orange{background:var(--badge-orange-bg);color:var(--badge-orange-tx)}.badge-blue{background:var(--primary-light);color:var(--primary)}
+  .badge-purple{background:var(--badge-purple-bg);color:var(--badge-purple-tx)}.badge-gray{background:var(--badge-gray-bg);color:var(--badge-gray-tx)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th{text-align:left;font-size:12px;color:var(--text-3);font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
   td{padding:10px 12px;border-bottom:1px solid #f2f2f7}
   tbody tr:hover{background:#fafbfc}
   .mono{font-family:var(--mono);font-size:12.5px}
   .search-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
-  .search-bar input,.search-bar select{padding:9px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;outline:none;background:#fff}
+  .search-bar input,.search-bar select{padding:9px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;outline:none;background:var(--surface)}
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px}
   .stat .label{font-size:12.5px;color:var(--text-3)}
   .stat .value{font-family:var(--serif);font-size:32px;font-weight:700;margin:4px 0;color:var(--primary)}
@@ -66,7 +69,7 @@
   /* ===== 模态框 ===== */
   .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:150;display:none;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px}
   .modal-mask.show{display:flex}
-  .modal{background:#fff;border-radius:16px;width:520px;max-width:96vw;box-shadow:0 24px 80px rgba(0,0,0,.3);animation:pop .18s ease}
+  .modal{background:var(--card);border-radius:16px;width:520px;max-width:96vw;box-shadow:0 24px 80px rgba(0,0,0,.3);animation:pop .18s ease}
   @keyframes pop{from{transform:translateY(-12px);opacity:0}}
   .modal-head{padding:18px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
   .modal-head b{font-family:var(--serif);font-size:17px;color:var(--primary)}
@@ -83,7 +86,7 @@
   .switch{position:relative;width:38px;height:22px;flex:none;cursor:pointer;display:inline-block}
   .switch input{opacity:0;width:0;height:0}
   .switch .sl{position:absolute;inset:0;background:#d1d1d6;border-radius:22px;transition:.2s}
-  .switch .sl::before{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.2s}
+  .switch .sl::before{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:var(--surface);top:2px;left:2px;transition:.2s}
   .switch input:checked + .sl{background:var(--green)}
   .switch input:checked + .sl::before{transform:translateX(16px)}
   .toast{position:fixed;top:20px;right:20px;z-index:200;background:#1d1d1f;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.25);display:none}
@@ -95,12 +98,12 @@
 .rule-table{width:100%;border-collapse:collapse;font-size:12px}
 .rule-table th{color:#6c7086;font-weight:500;padding:4px 6px;text-align:left;border-bottom:1px solid #dfe2ea}
 .rule-table td{padding:4px 4px;border-bottom:1px solid #eceef3}
-.rule-table input,.rule-table select{width:100%;padding:6px 8px;border:1px solid #d5d9e2;border-radius:6px;background:#fff;font-size:12px;box-sizing:border-box;color:#1e2130}
+.rule-table input,.rule-table select{width:100%;padding:6px 8px;border:1px solid #d5d9e2;border-radius:6px;background:var(--surface);font-size:12px;box-sizing:border-box;color:#1e2130}
 .rule-table input:focus,.rule-table select:focus{outline:none;border-color:#0b3d62;box-shadow:0 0 0 2px rgba(11,61,98,.12)}
 
 /* 资产协议筛选 chips */
 .proto-chips{display:flex;gap:6px}
-.chip{padding:6px 14px;border-radius:16px;border:1px solid #d5d9e2;background:#fff;color:#4b5568;font-size:12px;cursor:pointer;transition:all .15s}
+.chip{padding:6px 14px;border-radius:16px;border:1px solid #d5d9e2;background:var(--surface);color:#4b5568;font-size:12px;cursor:pointer;transition:all .15s}
 .chip:hover{border-color:#0b3d62}
 .chip.on{background:#0b3d62;color:#fff;border-color:#0b3d62;font-weight:600}
 .lbl{display:inline-block;padding:1px 8px;margin:1px 3px 1px 0;border-radius:9px;background:#eef1f6;color:#4b5568;font-size:11px;border:1px solid #dde2ec}
@@ -141,6 +144,7 @@
       <div class="nav-item" data-page="transfers" data-roles="admin,auditor"><span class="ic">📁</span>文件传输审计</div>
       <div class="nav-item" data-page="acctscan" data-roles="admin,auditor"><span class="ic">🧾</span>账号盘点</div>
       <div class="spacer"></div>
+      <div class="nav-item" id="theme-toggle" onclick="toggleTheme()" title="切换 黑/白 显示模式"><span class="ic" id="theme-ic">☀️</span><span id="theme-tx">浅色模式</span></div>
       <div class="side-user"><div class="avatar" id="u-avatar">A</div>
         <div class="u"><b id="u-name">-</b><span id="u-rolebar">-</span></div>
         <button class="btn-logout" onclick="logout()">⏻</button></div>
@@ -163,6 +167,18 @@ const API = '/api/v1';
 let TOKEN = sessionStorage.getItem('nb_token') || '';
 let USER = JSON.parse(sessionStorage.getItem('nb_user') || 'null');
 document.getElementById('ver-host').textContent = location.host;
+// ===== 黑/白显示模式（localStorage 记忆，全站 body.dark）=====
+function applyTheme(t){
+  document.body.classList.toggle('dark',t==='dark');
+  const ic=document.getElementById('theme-ic'),tx=document.getElementById('theme-tx');
+  if(ic)ic.textContent=t==='dark'?'🌙':'☀️';
+  if(tx)tx.textContent=t==='dark'?'深色模式':'浅色模式';
+}
+function toggleTheme(){
+  const t=document.body.classList.contains('dark')?'light':'dark';
+  localStorage.setItem('nb_theme',t);applyTheme(t);
+}
+applyTheme(localStorage.getItem('nb_theme')||'light');
 
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2500)}
 async function api(path, opts={}){
@@ -225,7 +241,7 @@ function pageAllowed(p){const rs=PAGE_ROLES[p];return !rs||rs.includes(USER&&USE
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('login-page').style.display!=='none')doLogin()});
 function logout(){TOKEN='';USER=null;sessionStorage.clear();location.reload()}
 
-document.querySelectorAll('.nav-item').forEach(i=>i.onclick=()=>go(i.dataset.page));
+document.querySelectorAll('.nav-item[data-page]').forEach(i=>i.onclick=()=>go(i.dataset.page));
 function go(page){
   if(!pageAllowed(page)){toast('无权访问该页面');page='myassets'}
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active',i.dataset.page===page));
