@@ -398,7 +398,9 @@ async policies(){
     </td></tr>`).join('');
   return `<div class="page-head"><div><h2>授权管理</h2><div class="sub">五维授权：用户/组 × 资产/节点 × 账号 × 时段 × 命令过滤</div></div>
     <button class="btn btn-primary" onclick="policyForm()">+ 新建策略</button></div>
-  <div class="card">${rows.length?`<table><thead><tr><th>策略名</th><th>授权对象</th><th>目标</th><th>账号</th><th>有效期至</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无策略，点击右上角新建</div>'}</div>`;
+  <div class="card">${rows.length?`<table id="pol-table"><thead><tr><th>策略名</th><th>授权对象</th><th>目标</th><th>账号</th><th>有效期至</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无策略，点击右上角新建</div>'}</div>
+`;
+  setTimeout(()=>paginateTable('#pol-table','pol'),0);
 },
 async users(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
@@ -417,7 +419,9 @@ async users(){
     </td></tr>`).join('');
   return `<div class="page-head"><div><h2>用户管理</h2><div class="sub">共 ${rows.length} 个用户 · 目录用户由 LDAP 同步，本地用户新建自动生成 TOTP</div></div>
     <button class="btn btn-primary" onclick="userForm()">+ 新建用户</button></div>
-  <div class="card">${rows.length?`<table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>来源</th><th>用户组</th><th>TOTP</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户</div>'}</div>`;
+  <div class="card">${rows.length?`<table id="usr-table"><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>来源</th><th>用户组</th><th>TOTP</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户</div>'}</div>
+`;
+  setTimeout(()=>paginateTable('#usr-table','usr'),0);
 },
 async groups(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
@@ -433,7 +437,9 @@ async groups(){
     </td></tr>`).join('');
   return `<div class="page-head"><div><h2>用户组管理</h2><div class="sub">共 ${rows.length} 个组 · 授权策略可按组批量授权</div></div>
     <button class="btn btn-primary" onclick="groupForm()">+ 新建用户组</button></div>
-  <div class="card">${rows.length?`<table><thead><tr><th>组名</th><th>描述</th><th>成员数</th><th>备注</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户组</div>'}</div>`;
+  <div class="card">${rows.length?`<table id="grp-table"><thead><tr><th>组名</th><th>描述</th><th>成员数</th><th>备注</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户组</div>'}</div>
+`;
+  setTimeout(()=>paginateTable('#grp-table','grp'),0);
 },
 async filters(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
@@ -738,6 +744,33 @@ function pgAssetGo(tableSel,p){window['__pg_'+tableSel]=p;
 function pgAssetSz(tableSel,el){window['__sz_'+tableSel]=parseInt(el.value,10)||20;window['__pg_'+tableSel]=1;
   if(tableSel.includes('my-assets'))myAssetsFilter();else assetsFilter();}
 function pagiAssetsTable(){}   // 兼容占位（分页由 filterAssetsTable 内置）
+// ===== 通用表格前端分页（授权/用户/用户组等：与审计分页同款样式）=====
+function paginateTable(tableSel, prefix, refresh){
+  const tbl=document.querySelector(tableSel);
+  if(!tbl)return;
+  const rows=[...tbl.querySelectorAll('tbody tr')];
+  const size=window['__sz_'+prefix]||20;
+  let page=window['__pg_'+prefix]||1;
+  const pages=Math.max(1,Math.ceil(rows.length/size));
+  if(page>pages)page=pages;
+  window['__pg_'+prefix]=page;
+  rows.forEach(tr=>tr.style.display='none');
+  rows.slice((page-1)*size,page*size).forEach(tr=>tr.style.display='');
+  // pager 条（复用审计分页样式）
+  let bar=tbl.parentElement.querySelector('.pager-bar');
+  if(!bar){bar=document.createElement('div');bar.className='pager-bar';tbl.parentElement.insertBefore(bar,tbl.nextSibling);}
+  if(pages<=1){bar.innerHTML=rows.length?`<div style="display:flex;gap:8px;align-items:center;margin-top:10px"><span class="hint" style="flex:1"></span><span class="hint">共 ${rows.length} 条</span>
+    <select onchange="ptSize('${prefix}',this,'${tableSel}')" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text)">${[20,50,100].map(s=>`<option value="${s}"${s===size?' selected':''}>${s} 条/页</option>`).join('')}</select></div>`:'';return;}
+  const btn=(p,t,cur,dis)=>`<button class="btn btn-sm ${cur?'btn-primary':'btn-ghost'}" ${dis?'disabled style="opacity:.4"':''} ${dis?'':`onclick="ptGo('${prefix}',${p},'${tableSel}')"`}>${t}</button>`;
+  let nums='',start=Math.max(1,page-3),end=Math.min(pages,start+6);start=Math.max(1,end-6);
+  for(let i=start;i<=end;i++)nums+=btn(i,i,i===page,false);
+  bar.innerHTML=`<div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">
+    ${btn(page-1,'‹',false,page<=1)}${nums}${btn(page+1,'›',false,page>=pages)}
+    <span class="hint" style="flex:1"></span><span class="hint">共 ${rows.length} 条 · 第 ${page}/${pages} 页</span>
+    <select onchange="ptSize('${prefix}',this,'${tableSel}')" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text)">${[20,50,100].map(s=>`<option value="${s}"${s===size?' selected':''}>${s} 条/页</option>`).join('')}</select></div>`;
+}
+function ptGo(prefix,p,sel){window['__pg_'+prefix]=p;paginateTable(sel,prefix);}
+function ptSize(prefix,el,sel){window['__sz_'+prefix]=parseInt(el.value,10)||20;window['__pg_'+prefix]=1;paginateTable(sel,prefix);}
 function assetsFilter(){ filterAssetsTable('#assets-table','a-q','a-count','__assetsProto'); }
 function myAssetsFilter(){ filterAssetsTable('#my-assets-table','my-q','my-count','__myAssetsProto'); }
 window.__myAssetsProto='';
