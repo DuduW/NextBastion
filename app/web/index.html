@@ -338,6 +338,8 @@ async myassets(){
     <td>${a.protocol==='rdp'
       ?`<button class="btn btn-sm btn-ghost" onclick="rdpConnect(${a.id})">RDP</button>`
       :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id})">连 接</button>`}</td></tr>`).join('');
+  // 前端分页（与搜索/协议筛选联动）：当前页切片渲染
+  setTimeout(()=>pagiAssetsTable('#my-assets-table','my-count','__myAssetsPg','__myAssetsSz',myAssetsFilter),0);
   return `<div class="page-head"><div><h2>我的资产</h2><div class="sub">五维授权过滤后的可见资产</div></div></div>
   <div class="card"><div class="search-bar" style="gap:10px;flex-wrap:wrap">
       <input id="my-q" placeholder="🔍 搜索主机名 / IP / 系统 / 分组" style="flex:1;min-width:200px" oninput="myAssetsFilter()">
@@ -695,19 +697,47 @@ function assetsProto(btn){
 function filterAssetsTable(tableSel,inputSel,cntSel,protoVar){
   const q=(document.getElementById(inputSel)?.value||'').trim().toLowerCase();
   const proto=window[protoVar];
+  // 分页状态（按表独立）
+  const pgKey='__pg_'+tableSel, szKey='__sz_'+tableSel;
   const rows=[...document.querySelectorAll(tableSel+' tbody tr')];
-  let shown=0;
-  rows.forEach(tr=>{
-    const okQ=!q||(tr.dataset.search||'').includes(q);
-    const okP=!proto||tr.dataset.proto===proto;
-    const show=okQ&&okP;
-    tr.style.display=show?'':'none';
-    if(show)shown++;
-  });
+  // 命中集合
+  const hit=rows.filter(tr=>(!q||(tr.dataset.search||'').includes(q))&&(!proto||tr.dataset.proto===proto));
+  const size=window[szKey]||20;
+  let page=window[pgKey]||1;
+  const pages=Math.max(1,Math.ceil(hit.length/size));
+  if(page>pages)page=pages;
+  window[pgKey]=page;
+  // 切片显示
+  rows.forEach(tr=>tr.style.display='none');
+  hit.slice((page-1)*size,page*size).forEach(tr=>tr.style.display='');
   const total=rows.length;
   const cnt=document.getElementById(cntSel);
-  if(cnt)cnt.textContent=total?(shown+' / '+total+' 台'):'';
+  if(cnt)cnt.textContent=total?(hit.length+' / '+total+' 台'):'';
+  // pager 条（复用审计分页样式）
+  const holder=document.querySelector(tableSel);
+  if(holder){
+    let bar=holder.parentElement.querySelector('.pager-bar');
+    if(!bar){bar=document.createElement('div');bar.className='pager-bar';holder.parentElement.insertBefore(bar,holder.nextSibling);}
+    const btn=(p,t,cur,dis)=>`<button class="btn btn-sm ${cur?'btn-primary':'btn-ghost'}" ${dis?'disabled style="opacity:.4"':''} ${dis?'':`onclick="pgAssetGo('${tableSel}',${p})"`}>${t}</button>`;
+    let nums='';
+    if(pages>1){
+      let s=Math.max(1,page-3),e=Math.min(pages,s+6);s=Math.max(1,e-6);
+      for(let i=s;i<=e;i++)nums+=btn(i,i,i===page,false);
+      bar.innerHTML=`<div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        ${btn(page-1,'‹',false,page<=1)}${nums}${btn(page+1,'›',false,page>=pages)}
+        <span class="hint" style="flex:1"></span><span class="hint">共 ${hit.length} 台 · 第 ${page}/${pages} 页</span>
+        <select onchange="pgAssetSz('${tableSel}',this)" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text)">
+          ${[10,20,50,100].map(s=>`<option value="${s}"${s===size?' selected':''}>${s} 条/页</option>`).join('')}
+        </select></div>`;
+    } else bar.innerHTML='';
+  }
 }
+function pgAssetGo(tableSel,p){window['__pg_'+tableSel]=p;
+  // 触发对应过滤函数
+  if(tableSel.includes('my-assets'))myAssetsFilter();else assetsFilter();}
+function pgAssetSz(tableSel,el){window['__sz_'+tableSel]=parseInt(el.value,10)||20;window['__pg_'+tableSel]=1;
+  if(tableSel.includes('my-assets'))myAssetsFilter();else assetsFilter();}
+function pagiAssetsTable(){}   // 兼容占位（分页由 filterAssetsTable 内置）
 function assetsFilter(){ filterAssetsTable('#assets-table','a-q','a-count','__assetsProto'); }
 function myAssetsFilter(){ filterAssetsTable('#my-assets-table','my-q','my-count','__myAssetsProto'); }
 window.__myAssetsProto='';
