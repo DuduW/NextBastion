@@ -164,9 +164,11 @@ async function finishSession(d){
   const dot=document.getElementById('conn-dot');
   dot.style.background='#389e0d'; dot.title='已连接';
   document.getElementById('btn-disc').style.display='';
-  // 默认目录：账号 home（sftp normalize('.')），失败回退 /
-  let home='/';
-  try{ const r=await api(`/files/${FSID}/list?path=.`); home=r.cwd||'/'; }catch(e){}
+  // 默认目录：账号 home（会话响应直接带；旧后端回退 list?path=.）
+  let home=d.home||'/';
+  if(!d.home){ try{ const r=await api(`/files/${FSID}/list?path=.`); home=r.cwd||'/'; }catch(e){} }
+  window.__home=home;
+  CWD=home;
   ls(home);
   renderTree();
   setInterval(()=>{ if(!CONNECTED)return; api(`/files/${FSID}/list?path=${encodeURIComponent(CWD)}`).catch(()=>{}); },300000); // 保活

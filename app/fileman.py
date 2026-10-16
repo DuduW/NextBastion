@@ -29,9 +29,11 @@ UPLOAD_DENY = ["/etc/cron", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly"
                "/etc/ssh", "/opt/nextbastion", "/root", "/etc/profile.d", "/etc/bash.bashrc",
                "/etc/rc.d", "/etc/rc.local", "/etc/crontab", "/var/spool/at", "/etc/cron.deny"]
 # 下载黑名单：按规范化后绝对路径判定（堡垒机自身 + 主机侧系统敏感区）
+# 注：/root、/home 是合法家目录（可浏览/下载普通文件），其敏感内容（.ssh/.bash_history/密钥）
+#     由 SENSITIVE_BASENAMES/SUFFIXES 文件名层拦截——路径层只挡系统敏感区
 SENSITIVE_PATHS = ["/opt/nextbastion", "/etc/shadow", "/etc/gshadow", "/etc/shadow-", "/etc/gshadow-",
-                   "/etc/passwd-", "/etc/ssh", "/root", "/etc/sudoers", "/etc/sudoers.d",
-                   "/var/spool/cron", "/etc/crontab"]
+                   "/etc/passwd-", "/etc/ssh", "/etc/sudoers", "/etc/sudoers.d",
+                   "/var/spool/cron", "/etc/crontab", "/root/.ssh", "/home/.ssh"]
 # 敏感文件名（basename 精确/后缀匹配）：主机私钥/凭据/凭据痕迹
 SENSITIVE_BASENAMES = {".secrets", "initial_credentials.txt", ".bash_history", ".mysql_history",
                        "authorized_keys", "known_hosts", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
@@ -130,9 +132,19 @@ async def open_session(user: dict, asset: dict, account: dict) -> str:
         asyncssh.connect(asset["ip"], port=asset["ssh_port"] or 22,
                          username=account["username"], password=secret,
                          known_hosts=None), timeout=8)
+    # 解析账号 home 作为起始目录（默认打开用户家目录而非 /）
+    home = "/"
+    try:
+        sftp0 = await asyncio.wait_for(conn.start_sftp_client(), timeout=5)
+        home = await asyncio.wait_for(sftp0.realpath("."), timeout=5)
+        sftp0.exit()
+    except Exception:
+        pass
+    if not (home or "").startswith("/"):
+        home = "/"
     fsid = utils.new_session_id()
     FSESSIONS[fsid] = {"conn": conn, "sftp": None, "user": user, "asset": asset,
-                       "account": account, "ts": time.time()}
+                       "account": account, "ts": time.time(), "home": home}
     return fsid
 
 
@@ -171,15 +183,12 @@ def log_transfer(s: dict, direction: str, path: str, size: int, result: str,
 async def list_dir(fsid: str, path: str) -> dict:
     s = _sess(fsid)
     sf = await _sftp(s)
-    path = path or "/"
-    # 安全加固：原始输入可疑 → 审计标记（相对路径合法场景走 realpath 后再校验）
+    # 默认/相对路径 → 账号 home（用户家目录），而非 /
+    if not path or path == "." or not path.startswith("/"):
+        path = s.get("home") or "/"
+    # 安全加固：原始输入可疑 → 审计标记
     if _suspicious_raw(path):
         log_transfer(s, "list", path, 0, "suspicious_path")
-    try:
-        if not path.startswith("/"):
-            path = await sf.realpath(path)
-    except Exception:
-        pass
     path = _check_read_meta(path)   # 统一校验（规范化+敏感路径）
     attrs = await sf.listdir(path)
     import stat as _st

@@ -1862,7 +1862,8 @@ async def file_session(asset_id: int, account_id: int, request: Request = None, 
     except Exception as e:
         raise HTTPException(502, f"SSH 连接失败: {str(e)[:80]}")
     write_audit(p['username'], 'fileman_open', 'asset', asset_id, {'fsid': fsid})
-    return utils.ok({"fsid": fsid, "hostname": asset['hostname'], "ip": asset['ip']})
+    return utils.ok({"fsid": fsid, "hostname": asset['hostname'], "ip": asset['ip'],
+                     "home": fileman.FSESSIONS.get(fsid, {}).get("home", "/")})
 
 @app.post("/api/v1/files/{fsid}/close")
 async def file_close(fsid: str, p=Depends(auth)):
