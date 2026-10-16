@@ -132,6 +132,7 @@
       <div class="nav-item" data-page="myassets" data-roles="admin,auditor,user"><span class="ic">🖥️</span>我的资产</div>
       <div class="nav-group">管理</div>
       <div class="nav-item" data-page="assets" data-roles="admin"><span class="ic">🗂️</span>资产管理</div>
+      <div class="nav-item" data-page="nodes" data-roles="admin"><span class="ic">🌲</span>节点管理</div>
       <div class="nav-item" data-page="policies" data-roles="admin"><span class="ic">🔐</span>授权管理</div>
       <div class="nav-item" data-page="users" data-roles="admin"><span class="ic">👥</span>用户管理</div>
       <div class="nav-item" data-page="groups" data-roles="admin"><span class="ic">👨‍👩‍👧‍👦</span>用户组管理</div>
@@ -236,7 +237,7 @@ function applyNavRoles(){
     i.style.display = rs.includes(USER&&USER.role)?'':'none';
   });
 }
-const PAGE_ROLES={assets:['admin'],policies:['admin'],users:['admin'],groups:['admin'],filters:['admin'],settings:['admin'],active:['admin','auditor'],sessions:['admin','auditor'],commands:['admin','auditor']};
+const PAGE_ROLES={assets:['admin'],nodes:['admin'],policies:['admin'],users:['admin'],groups:['admin'],filters:['admin'],settings:['admin'],active:['admin','auditor'],sessions:['admin','auditor'],commands:['admin','auditor']};
 function pageAllowed(p){const rs=PAGE_ROLES[p];return !rs||rs.includes(USER&&USER.role)}
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('login-page').style.display!=='none')doLogin()});
 function logout(){TOKEN='';USER=null;sessionStorage.clear();location.reload()}
@@ -388,6 +389,41 @@ async assets(){
       <button class="btn btn-danger" onclick="batchDelAssets()">🗑 批量删除</button>`:''}
     </div>
   <div id="assets-table">${rows.length?`<table id="a-tbl"><thead><tr><th style="width:34px"></th><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>端口</th><th>托管账号</th><th>节点</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无资产，点击右上角新建</div>'}</div></div>`;
+},
+// ===== 节点管理（所属节点树）=====
+async nodes(){
+  if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
+  const [nodes,assets]=await Promise.all([api('/nodes'),api('/assets')]);
+  window.__nodeRows=nodes;
+  const assetCount={}; assets.forEach(a=>assetCount[a.node_id]=(assetCount[a.node_id]||0)+1);
+  const byParent={}; nodes.forEach(n=>{(byParent[n.parent_id]=byParent[n.parent_id]||[]).push(n)});
+  const totalAssets=assets.length;
+  // 递归子树资产数（含继承显示）
+  const subCount=id=>{let c=assetCount[id]||0;(byParent[id]||[]).forEach(ch=>c+=subCount(ch.id));return c};
+  const tree=(pid,depth)=>{
+    return (byParent[pid]||[]).map(n=>{
+      const kids=tree(n.id,depth+1);
+      const cnt=assetCount[n.id]||0, sub=subCount(n.id);
+      return `<div class="node-row" data-nid="${n.id}" style="padding-left:${8+depth*22}px">
+        <span class="nd-ic">📁</span>
+        <b>${esc(n.name)}</b>
+        ${n.id===1?`<span class="badge badge-blue">根</span>`:''}
+        <span class="hint">直属 ${cnt} 台 · 子树 ${sub} 台</span>
+        <span style="flex:1"></span>
+        <button class="btn btn-sm btn-ghost" onclick="nodeForm(${n.id},'sub')">＋子节点</button>
+        ${n.id!==1?`<button class="btn btn-sm btn-ghost" onclick="nodeForm(${n.id},'edit')">编辑</button>
+        <button class="btn btn-sm btn-danger" onclick="delNode(${n.id},'${esc(n.name)}')">删除</button>`:''}
+      </div>${kids}`;
+    }).join('');
+  };
+  return `<div class="page-head"><div><h2>节点管理</h2><div class="sub">资产所属节点树 · 授权可挂节点（父节点授权覆盖全部子树，共 ${nodes.length} 个节点 / ${totalAssets} 台资产）</div></div>
+    <button class="btn btn-primary" onclick="nodeForm(null,'sub')">+ 新建根级节点</button></div>
+  <div class="card" style="max-height:70vh;overflow:auto">${tree(null,0)||'<div class="empty">无节点</div>'}</div>
+  <style>
+    .node-row{display:flex;align-items:center;gap:10px;padding:11px 10px;border-radius:10px}
+    .node-row:hover{background:var(--surface-hover)}
+    .nd-ic{font-size:16px}
+  </style>`;
 },
 async policies(){
   if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
@@ -741,6 +777,49 @@ function filterAssetsTable(tableSel,inputSel,cntSel,protoVar){
 function pgAssetGo(tableSel,p){window['__pg_'+tableSel]=p;
   // 触发对应过滤函数
   if(tableSel.includes('my-assets'))myAssetsFilter();else assetsFilter();}
+// ===== 节点管理：新建/编辑弹窗 + 删除 =====
+function nodeForm(nid,mode){
+  const rows=window.__nodeRows||[];
+  const cur=nid?rows.find(n=>n.id===nid):null;
+  const isEdit=mode==='edit';
+  const defParent=isEdit?(cur?cur.parent_id:null):(cur?cur.id:null);
+  // 父节点候选：编辑时排除自己及子孙（防环——后端也校验）
+  let banned=new Set();
+  if(isEdit&&cur){const stack=[cur.id];while(stack.length){const id=stack.pop();banned.add(id);rows.filter(n=>n.parent_id===id).forEach(n=>stack.push(n.id))}}
+  const opts=rows.filter(n=>!banned.has(n.id))
+    .map(n=>{let d=0,p=n.parent_id;while(p!=null&&d<9){d++;p=(rows.find(x=>x.id===p)||{}).parent_id??null}
+      return `<option value="${n.id}" ${defParent===n.id?'selected':''}>${'　'.repeat(d)}${esc(n.name)}</option>`}).join('');
+  const title=isEdit?`编辑节点${cur?'：'+esc(cur.name):''}`:(nid?`新建子节点（父：${cur?esc(cur.name):''}）`:'新建根级节点');
+  openModal(`
+  <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    ${mRow('节点名称',`<input id="nd-name" value="${isEdit&&cur?esc(cur.name):''}" placeholder="如：苏州 IDC / 生产区">`)}
+    ${mRow('父节点',`<select id="nd-parent"><option value="">（根级 · 挂在「全部资产」下）</option>${opts}</select>`)}
+    <div class="hint">授权挂父节点 = 覆盖全部子树资产；删除前需先移走子节点与资产。</div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="saveNode(${nid||'null'},${isEdit})">保存</button>
+  </div>`);
+  const s=document.getElementById('nd-parent');
+  if(s)s.value=(defParent===null||defParent===undefined)?'':String(defParent);
+}
+async function saveNode(nid,isEdit){
+  const name=document.getElementById('nd-name').value.trim();
+  const parentRaw=document.getElementById('nd-parent').value;
+  const parent_id=parentRaw===''?null:parseInt(parentRaw,10);
+  if(!name){toast('名称必填');return}
+  try{
+    if(isEdit)await api('/nodes/'+nid,{method:'PUT',body:JSON.stringify({name,parent_id})});
+    else await api('/nodes',{method:'POST',body:JSON.stringify({name,parent_id})});
+    closeModal();toast(isEdit?'已更新':'已创建');go('nodes');
+  }catch(e){toast(e.message||'保存失败')}
+}
+async function delNode(nid,name){
+  if(!confirm(`确认删除节点「${name}」？\n（需无子节点且无资产挂着）`))return;
+  try{await api('/nodes/'+nid,{method:'DELETE'});toast('已删除');go('nodes')}
+  catch(e){toast(e.message||'删除失败')}
+}
 function pgAssetSz(tableSel,el){window['__sz_'+tableSel]=parseInt(el.value,10)||20;window['__pg_'+tableSel]=1;
   if(tableSel.includes('my-assets'))myAssetsFilter();else assetsFilter();}
 function pagiAssetsTable(){}   // 兼容占位（分页由 filterAssetsTable 内置）

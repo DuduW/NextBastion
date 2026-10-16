@@ -446,6 +446,68 @@ async def delete_user(uid: int, p=Depends(require_role('admin'))):
 async def nodes(p=Depends(auth)):
     return utils.ok(utils.query("SELECT * FROM asset_nodes ORDER BY sort"))
 
+# ===== 节点管理 CRUD（所属节点管理）=====
+@app.post("/api/v1/nodes")
+async def node_create(request: Request, p=Depends(require_role('admin'))):
+    """新建节点 {name, parent_id}"""
+    b = await request.json()
+    name = (b.get('name') or '').strip()
+    parent_id = b.get('parent_id')
+    if not name:
+        raise HTTPException(400, "节点名称必填")
+    if len(name) > 128:
+        raise HTTPException(400, "节点名称过长")
+    if parent_id is not None:
+        if not utils.query("SELECT id FROM asset_nodes WHERE id=%s", (parent_id,), one=True):
+            raise HTTPException(404, "父节点不存在")
+    nid = utils.execute("INSERT INTO asset_nodes (parent_id, name) VALUES (%s,%s)", (parent_id, name))
+    write_audit(p['username'], 'node_create', 'node', nid, {'name': name, 'parent': parent_id})
+    return utils.ok({"id": nid})
+
+@app.put("/api/v1/nodes/{nid}")
+async def node_update(nid: int, request: Request, p=Depends(require_role('admin'))):
+    """改名 / 移动父节点 {name?, parent_id?}（防环：新父不能是自己或自己的子孙）"""
+    row = utils.query("SELECT * FROM asset_nodes WHERE id=%s", (nid,), one=True)
+    if not row:
+        raise HTTPException(404, "node not found")
+    b = await request.json()
+    name = (b.get('name') or '').strip() or row['name']
+    parent_id = row['parent_id']
+    if 'parent_id' in b:
+        parent_id = b.get('parent_id')
+        if parent_id is not None:
+            if parent_id == nid:
+                raise HTTPException(400, "父节点不能是自己")
+            if not utils.query("SELECT id FROM asset_nodes WHERE id=%s", (parent_id,), one=True):
+                raise HTTPException(404, "父节点不存在")
+            # 防环：沿新父向上找，若遇到自己则拒绝
+            cur, hops = parent_id, 0
+            while cur is not None and hops < 100:
+                if cur == nid:
+                    raise HTTPException(400, "不能移动到自己的子孙节点下")
+                nxt = utils.query("SELECT parent_id FROM asset_nodes WHERE id=%s", (cur,), one=True)
+                cur = nxt['parent_id'] if nxt else None
+                hops += 1
+    utils.execute("UPDATE asset_nodes SET name=%s, parent_id=%s WHERE id=%s", (name, parent_id, nid))
+    write_audit(p['username'], 'node_update', 'node', nid, {'name': name, 'parent': parent_id})
+    return utils.ok(message="updated")
+
+@app.delete("/api/v1/nodes/{nid}")
+async def node_delete(nid: int, p=Depends(require_role('admin'))):
+    """删除节点：需无子节点且无资产挂着（防孤儿）"""
+    row = utils.query("SELECT * FROM asset_nodes WHERE id=%s", (nid,), one=True)
+    if not row:
+        raise HTTPException(404, "node not found")
+    if row.get('name') == '全部资产' or nid == 1:
+        raise HTTPException(400, "根节点「全部资产」不可删除")
+    if utils.query("SELECT COUNT(*) c FROM asset_nodes WHERE parent_id=%s", (nid,), one=True)['c']:
+        raise HTTPException(400, "存在子节点，请先移走或删除子节点")
+    if utils.query("SELECT COUNT(*) c FROM assets WHERE node_id=%s", (nid,), one=True)['c']:
+        raise HTTPException(400, "节点下仍有资产，请先移走资产")
+    utils.execute("DELETE FROM asset_nodes WHERE id=%s", (nid,))
+    write_audit(p['username'], 'node_delete', 'node', nid, {'name': row['name']})
+    return utils.ok(message="deleted")
+
 # ===== 资产字段选项字典（数据库存储） =====
 @app.get("/api/v1/assets/field-options")
 async def get_field_options(p=Depends(auth)):
