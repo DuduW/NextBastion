@@ -211,7 +211,8 @@ async def login(request: Request):
         write_login_log(username, ip, 'fail', 'locked(auto)')
         raise HTTPException(423, "失败次数过多，账号已锁定 15 分钟")
     # P4 安全（第三轮渗透）：admin 角色强制 MFA——未开启双因子的管理员拒绝（置于 TOTP 分支前，未绑定时给出明确指引）
-    if u['role'] == 'admin' and not (u['is_mfa_enabled'] and u['totp_secret']):
+    # 临时旁路：存在 /opt/nextbastion/.admin_mfa_off 文件时跳过强制（应急用，删除文件即恢复强制）
+    if not os.path.exists('/opt/nextbastion/.admin_mfa_off') and u['role'] == 'admin' and not (u['is_mfa_enabled'] and u['totp_secret']):
         write_login_log(username, ip, 'fail', 'admin mfa required')
         raise HTTPException(403, "管理员账号必须启用 TOTP 双因子后才能登录（请联系运维在用户管理中开启 MFA 并完成绑定）")
     if u['locked_until'] and u['locked_until'] > datetime.now():
