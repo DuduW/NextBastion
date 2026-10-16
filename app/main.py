@@ -2105,16 +2105,43 @@ async def role_settings_put(request: Request, p=Depends(require_role('admin'))):
 
 @app.get("/api/v1/role-matrix")
 async def role_matrix(p=Depends(auth)):
-    """角色权限矩阵（对齐前端 PAGE_ROLES + 后端 require_role 实际逻辑）"""
+    """角色权限矩阵（对齐前端 PAGE_ROLES + 后端 require_role/check_access 实际逻辑）
+    值语义：True=完全可用 / 'own'=仅自己 / 'policy'=受五维授权约束 / False=无权限"""
     m = [
-        {"page": "我的资产 / SSH / RDP / 文件管理", "admin": True, "auditor": False, "user": True},
-        {"page": "资产管理 / 节点管理", "admin": True, "auditor": False, "user": False},
-        {"page": "授权管理（五维策略）", "admin": True, "auditor": False, "user": False},
-        {"page": "用户管理", "admin": True, "auditor": False, "user": False},
-        {"page": "角色管理", "admin": True, "auditor": False, "user": False},
-        {"page": "在线会话监视 / 实时观看", "admin": True, "auditor": True, "user": "own"},
-        {"page": "会话回放 / 命令审计 / 传输审计", "admin": True, "auditor": True, "user": False},
-        {"page": "系统设置（LDAP/Webhook/Syslog）", "admin": True, "auditor": False, "user": False},
+        # ---- 登录与自助 ----
+        {"group": "登录与自助", "page": "登录（密码 + TOTP 双因子）", "admin": True, "auditor": True, "user": True},
+        {"group": "登录与自助", "page": "仪表盘（个人统计）", "admin": True, "auditor": True, "user": True},
+        {"group": "登录与自助", "page": "修改自己的密码 / 重绑 TOTP", "admin": True, "auditor": True, "user": True},
+        # ---- 资产访问 ----
+        {"group": "资产访问", "page": "我的资产列表（五维授权过滤）", "admin": "policy", "auditor": False, "user": "policy"},
+        {"group": "资产访问", "page": "SSH 终端会话（命令过滤/录像审计）", "admin": "policy", "auditor": False, "user": "policy"},
+        {"group": "资产访问", "page": "RDP 远程桌面（guacd 网关）", "admin": "policy", "auditor": False, "user": "policy"},
+        {"group": "资产访问", "page": "SFTP 文件管理（上传/下载/重命名）", "admin": "policy", "auditor": False, "user": "policy"},
+        {"group": "资产访问", "page": "临时凭据连接（无托管账号资产）", "admin": "policy", "auditor": False, "user": "policy"},
+        {"group": "资产访问", "page": "连接堡垒机自身", "admin": True, "auditor": False, "user": False},
+        # ---- 资产与节点管理 ----
+        {"group": "资产管理", "page": "资产管理（增删改/批量探测/批量删除）", "admin": True, "auditor": False, "user": False},
+        {"group": "资产管理", "page": "节点管理（树增删改/移动）", "admin": True, "auditor": False, "user": False},
+        {"group": "资产管理", "page": "CSV 批量导入资产", "admin": True, "auditor": False, "user": False},
+        {"group": "资产管理", "page": "查看资产列表（只读）", "admin": True, "auditor": False, "user": False},
+        # ---- 授权与账号 ----
+        {"group": "授权与账号", "page": "授权管理（五维策略增删改）", "admin": True, "auditor": False, "user": False},
+        {"group": "授权与账号", "page": "用户管理（增删改/批量角色/重置TOTP）", "admin": True, "auditor": False, "user": False},
+        {"group": "授权与账号", "page": "角色管理（默认角色/权限矩阵）", "admin": True, "auditor": False, "user": False},
+        {"group": "授权与账号", "page": "账号盘点（资产凭据扫描）", "admin": True, "auditor": True, "user": False},
+        # ---- 审计 ----
+        {"group": "审计与监控", "page": "在线会话列表 / 强制断开", "admin": True, "auditor": True, "user": False},
+        {"group": "审计与监控", "page": "SSH 会话实时监视（asciicast）", "admin": True, "auditor": True, "user": "own"},
+        {"group": "审计与监控", "page": "会话回放（全程录像）", "admin": True, "auditor": True, "user": False},
+        {"group": "审计与监控", "page": "命令审计（检索/回放定位）", "admin": True, "auditor": True, "user": False},
+        {"group": "审计与监控", "page": "文件传输审计（含高危留证副本）", "admin": True, "auditor": True, "user": False},
+        {"group": "审计与监控", "page": "登录日志 / 拒绝审计（deny_*）", "admin": True, "auditor": True, "user": False},
+        {"group": "审计与监控", "page": "高危规则管理（命令过滤集）", "admin": True, "auditor": False, "user": False},
+        # ---- 系统 ----
+        {"group": "系统", "page": "系统设置（LDAP 目录认证/角色组映射）", "admin": True, "auditor": False, "user": False},
+        {"group": "系统", "page": "Webhook / Syslog 转发配置", "admin": True, "auditor": False, "user": False},
+        {"group": "系统", "page": "LDAP 手动全量同步", "admin": True, "auditor": False, "user": False},
+        {"group": "系统", "page": "审计日志导出（CSV）", "admin": True, "auditor": True, "user": False},
     ]
     counts = {"admin": 0, "auditor": 0, "user": 0}
     for row in utils.query("SELECT role, COUNT(*) c FROM users GROUP BY role"):

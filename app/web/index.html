@@ -463,9 +463,9 @@ async users(){
 },
 async roles(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
-  const [rs, rm]=await Promise.all([api('/role-matrix'),api('/role-settings')]);
+  const [mtrx, sett]=await Promise.all([api('/role-matrix'),api('/role-settings')]);
   const roleMeta={'admin':{ic:'👑',desc:'全功能：资产/授权/用户/审计/系统设置'},'auditor':{ic:'📜',desc:'只读审计：在线会话/回放/命令/传输'},'user':{ic:'👤',desc:'自助使用：我的资产/会话（受五维授权约束）'}};
-  const cnt=rm.counts||{};
+  const cnt=mtrx.counts||{};
   const cards=Object.keys(roleMeta).map(r=>`
     <div class="rolecard" style="border:1.5px solid var(--border);border-radius:14px;padding:16px;position:relative">
       <span style="font-size:26px">${roleMeta[r].ic}</span><b style="display:block;font-size:15px;margin:6px 0 2px">${{admin:'管理员',auditor:'审计员',user:'用户'}[r]} · ${r}</b>
@@ -473,19 +473,28 @@ async roles(){
       <span class="badge badge-blue" style="margin-top:6px">${cnt[r]||0} 个用户</span>
       <button class="btn btn-sm btn-ghost" style="position:absolute;top:12px;right:12px" onclick="roleUsers('${r}')">管理用户</button>
     </div>`).join('');
-  const mx=(rm.matrix||[]).map(m=>`<tr><td>${esc(m.page)}</td>
-    <td>${m.admin===true?'<span style="color:var(--green);font-weight:600">✔</span>':'<span style="color:var(--text-3)">—</span>'}</td>
-    <td>${m.auditor===true?'<span style="color:var(--green);font-weight:600">✔</span>':'<span style="color:var(--text-3)">—</span>'}</td>
-    <td>${m.user===true?'<span style="color:var(--green);font-weight:600">✔</span>':m.user==='own'?'<span class="hint">仅自己</span>':'<span style="color:var(--text-3)">—</span>'}</td></tr>`).join('');
-  const rmap=rs.role_map||{};
+  const cell=v=>v===true?'<span style="color:var(--green);font-weight:600">✔</span>'
+    :v==='own'?'<span class="badge badge-blue" style="font-size:11px">仅自己</span>'
+    :v==='policy'?'<span class="badge badge-orange" style="font-size:11px">需授权</span>'
+    :'<span style="color:var(--text-3)">—</span>';
+  let lastGroup='',mxRows='';
+  (mtrx.matrix||[]).forEach(m=>{
+    if(m.group&&m.group!==lastGroup){
+      lastGroup=m.group;
+      mxRows+=`<tr><td colspan="4" style="background:var(--primary-light);color:var(--primary);font-weight:600;font-size:12px;padding:6px 10px">${esc(m.group)}</td></tr>`;
+    }
+    mxRows+=`<tr><td style="padding-left:18px">${esc(m.page)}</td><td>${cell(m.admin)}</td><td>${cell(m.auditor)}</td><td>${cell(m.user)}</td></tr>`;
+  });
+  const rmap=sett.role_map||{};
   return `<div class="page-head"><div><h2>角色管理</h2><div class="sub">系统内置 3 角色 · 权限矩阵 · 默认角色（LDAP 角色映射在 系统设置 → 目录认证 配置）</div></div></div>
   <div class="card"><h3 style="margin-bottom:12px">系统角色</h3>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">${cards}</div></div>
   <div class="card"><h3>角色权限矩阵</h3>
-    <table><thead><tr><th>页面 / 能力</th><th>admin</th><th>auditor</th><th>user</th></tr></thead><tbody>${mx}</tbody></table></div>
+    <div class="hint" style="margin-bottom:8px">图例：<span style="color:var(--green);font-weight:600">✔</span> 完全可用 · <span class="badge badge-blue" style="font-size:11px">仅自己</span> 只能操作自己的数据 · <span class="badge badge-orange" style="font-size:11px">需授权</span> 需五维授权策略放行 · — 无权限</div>
+    <table><thead><tr><th>页面 / 能力</th><th>👑 admin</th><th>📜 auditor</th><th>👤 user</th></tr></thead><tbody>${mxRows}</tbody></table></div>
   <div class="card"><h3>默认角色</h3>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <select id="def-role">${['user','auditor','admin'].map(r=>`<option value="${r}"${rs.default_role===r?' selected':''}>${{admin:'管理员',auditor:'审计员',user:'用户'}[r]}</option>`).join('')}</select>
+      <select id="def-role">${['user','auditor','admin'].map(r=>`<option value="${r}"${sett.default_role===r?' selected':''}>${{admin:'管理员',auditor:'审计员',user:'用户'}[r]}</option>`).join('')}</select>
       <button class="btn" onclick="saveRoleSettings()">保存</button>
       <span class="hint">新建用户 & LDAP 同步未命中映射时的兜底角色</span></div></div>
 `;
