@@ -57,10 +57,12 @@ def verify_password(pw: str, stored: str) -> bool:
         return False
 
 # ---------- JWT ----------
-def make_token(user_id: int, username: str, role: str, kind='access') -> str:
+def make_token(user_id: int, username: str, role: str, kind='access', jti=None) -> str:
     ttl = ACCESS_TOKEN_TTL if kind == 'access' else REFRESH_TOKEN_TTL
     payload = {"sub": str(user_id), "username": username, "role": role, "kind": kind,
                "exp": int(time.time()) + ttl}
+    if jti:
+        payload["jti"] = jti   # P5：access token 唯一指纹（并发会话挤下线用）
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
 def decode_token(token: str) -> dict:

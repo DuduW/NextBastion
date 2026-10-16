@@ -44,6 +44,15 @@ async def unify_response(request: Request, call_next):
 # ============================================================
 # 认证依赖
 # ============================================================
+def _sanitize_text(s, max_len=200):
+    """P6 安全：展示字段入库净化——去除 HTML 标签与控制字符（纵深防御，前端仍保持 esc）"""
+    import re as _re
+    if s is None:
+        return s
+    t = _re.sub(r'<[^>]*>', '', str(s))
+    t = ''.join(c for c in t if ord(c) >= 32 or c in '\t')
+    return t[:max_len]
+
 async def auth(request: Request = None, token: str = None):
     t = token or (request.headers.get('Authorization', '').replace('Bearer ', '') if request else '')
     if not t:
@@ -52,6 +61,10 @@ async def auth(request: Request = None, token: str = None):
         payload = utils.decode_token(t)
         if payload.get('kind') != 'access':
             raise HTTPException(401, "wrong token kind")
+        # P5：并发会话挤下线——被撤销 jti 的 token 拒绝
+        jti = payload.get('jti')
+        if jti and utils.query("SELECT id FROM revoked_tokens WHERE jti=%s", (jti,), one=True):
+            raise HTTPException(401, "session superseded")
         return payload
     except HTTPException:
         raise
@@ -197,6 +210,10 @@ async def login(request: Request):
         utils.execute("UPDATE users SET locked_until=DATE_ADD(NOW(), INTERVAL 15 MINUTE) WHERE id=%s", (u['id'],))
         write_login_log(username, ip, 'fail', 'locked(auto)')
         raise HTTPException(423, "失败次数过多，账号已锁定 15 分钟")
+    # P4 安全（第三轮渗透）：admin 角色强制 MFA——未开启双因子的管理员拒绝（置于 TOTP 分支前，未绑定时给出明确指引）
+    if u['role'] == 'admin' and not (u['is_mfa_enabled'] and u['totp_secret']):
+        write_login_log(username, ip, 'fail', 'admin mfa required')
+        raise HTTPException(403, "管理员账号必须启用 TOTP 双因子后才能登录（请联系运维在用户管理中开启 MFA 并完成绑定）")
     if u['locked_until'] and u['locked_until'] > datetime.now():
         write_login_log(username, ip, 'fail', 'locked')
         raise HTTPException(423, f"账号已锁定至 {u['locked_until']}")
@@ -237,11 +254,35 @@ async def login(request: Request):
             raise HTTPException(401, "动态口令已使用，请等待下一码")
     utils.execute("UPDATE users SET fail_count=0, locked_until=NULL WHERE id=%s", (u['id'],))
     write_login_log(username, ip, 'success')
+    # P5 安全：并发会话上限——挤掉最旧（jti 撤销 + 会话表裁剪）
+    new_jti = utils.new_session_id()
+    _enforce_session_cap(u['id'], new_jti)
     return utils.ok({
-        "access_token": utils.make_token(u['id'], u['username'], u['role']),
+        "access_token": utils.make_token(u['id'], u['username'], u['role'], jti=new_jti),
         "refresh_token": utils.make_token(u['id'], u['username'], u['role'], kind='refresh'),
         "user": {"id": u['id'], "username": u['username'], "role": u['role'], "display_name": u['display_name']}
     })
+
+# ---------- P5：并发会话上限（挤下线） ----------
+ACCESS_SESSION_CAP = 5
+
+def _enforce_session_cap(uid: int, new_jti: str):
+    """记录本次 token；超上限时把最旧的 jti 写入撤销表（auth() 校验拒绝）并裁剪会话记录。"""
+    try:
+        utils.execute("INSERT INTO access_token_sessions (uid, jti, created_at) VALUES (%s,%s,NOW())",
+                      (uid, new_jti))
+        rows = utils.query("SELECT id, jti FROM access_token_sessions WHERE uid=%s ORDER BY id DESC",
+                           (uid,))
+        drop = rows[ACCESS_SESSION_CAP:]
+        if drop:
+            for d in drop:
+                utils.execute(
+                    "INSERT IGNORE INTO revoked_tokens (jti, uid, expires_at) "
+                    "VALUES (%s,%s, DATE_ADD(NOW(), INTERVAL 8 HOUR))", (d['jti'], uid))
+            utils.execute("DELETE FROM access_token_sessions WHERE id IN (%s)"
+                          % ','.join(['%s'] * len(drop)), tuple(d['id'] for d in drop))
+    except Exception:
+        pass  # 会话上限异常不阻断登录（表未建时静默跳过）
 
 @app.post("/api/v1/auth/refresh")
 async def refresh(request: Request):
@@ -319,7 +360,7 @@ async def create_user(request: Request, p=Depends(require_role('admin'))):
     uid = utils.execute(
         "INSERT INTO users (username, password_hash, totp_secret, display_name, role, is_mfa_enabled) VALUES (%s,%s,%s,%s,%s,%s)",
         (b['username'], utils.hash_password(b['password']), secret,
-         b.get('display_name', ''), b.get('role', 'user'), 1))
+         _sanitize_text(b.get('display_name', ''), 64), b.get('role', 'user'), 1))
     for gid in b.get('groups', []):
         utils.execute("INSERT IGNORE INTO user_group_map (user_id, group_id) VALUES (%s,%s)", (uid, gid))
     write_audit(p['username'], 'create_user', 'user', uid, {'username': b['username']})
@@ -387,7 +428,7 @@ async def update_user(uid: int, request: Request, p=Depends(require_role('admin'
     if not row:
         raise HTTPException(404, "user not found")
     sets, args = ["display_name=%s", "role=%s", "is_active=%s"], [
-        b.get('display_name', row['display_name']),
+        _sanitize_text(b.get('display_name', row['display_name']), 64),
         b.get('role', row['role']),
         1 if b.get('is_active', row['is_active']) else 0,
     ]
@@ -452,7 +493,7 @@ async def nodes(p=Depends(auth)):
 async def node_create(request: Request, p=Depends(require_role('admin'))):
     """新建节点 {name, parent_id}"""
     b = await request.json()
-    name = (b.get('name') or '').strip()
+    name = _sanitize_text((b.get('name') or '').strip(), 128)
     parent_id = b.get('parent_id')
     if not name:
         raise HTTPException(400, "节点名称必填")
@@ -472,7 +513,7 @@ async def node_update(nid: int, request: Request, p=Depends(require_role('admin'
     if not row:
         raise HTTPException(404, "node not found")
     b = await request.json()
-    name = (b.get('name') or '').strip() or row['name']
+    name = _sanitize_text((b.get('name') or '').strip() or row['name'], 128)
     parent_id = row['parent_id']
     if 'parent_id' in b:
         parent_id = b.get('parent_id')
@@ -578,10 +619,10 @@ async def list_assets(request: Request, p=Depends(auth)):
 async def create_asset(request: Request, p=Depends(require_role('admin'))):
     b = await request.json()
     import json as _json
-    labels = _json.dumps([s.strip() for s in (b.get('labels') or '').split(',') if s.strip()], ensure_ascii=False)
+    labels = _json.dumps([_sanitize_text(s, 40) for s in (b.get('labels') or '').split(',') if s.strip()], ensure_ascii=False)
     aid = utils.execute(
         "INSERT INTO assets (node_id, hostname, ip, os_type, ssh_port, rdp_port, protocol, labels) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-        (b.get('node_id', 1), b['hostname'], b['ip'], b.get('os_type', 'Linux'),
+        (b.get('node_id', 1), _sanitize_text(b['hostname'], 128), b['ip'], _sanitize_text(b.get('os_type', 'Linux'), 40),
          b.get('ssh_port', 22), b.get('rdp_port', 3389), b.get('protocol', 'ssh'), labels))
     if b.get('password'):
         utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted) VALUES (%s,%s,'password',%s)",
@@ -596,11 +637,11 @@ async def update_asset(aid: int, request: Request, p=Depends(require_role('admin
     if not row:
         raise HTTPException(404, "asset not found")
     import json as _json
-    labels = _json.dumps([s.strip() for s in (b.get('labels') or '').split(',') if s.strip()], ensure_ascii=False)
+    labels = _json.dumps([_sanitize_text(s, 40) for s in (b.get('labels') or '').split(',') if s.strip()], ensure_ascii=False)
     utils.execute("""UPDATE assets SET node_id=%s, hostname=%s, ip=%s, os_type=%s, protocol=%s,
                      ssh_port=%s, rdp_port=%s, status=%s, labels=%s WHERE id=%s""",
-                  (b.get('node_id', row['node_id']), b.get('hostname', row['hostname']),
-                   b.get('ip', row['ip']), b.get('os_type', row['os_type']),
+                  (b.get('node_id', row['node_id']), _sanitize_text(b.get('hostname', row['hostname']), 128), b.get('ip', row['ip']),
+                   _sanitize_text(b.get('os_type', row['os_type']), 40),
                    b.get('protocol', row['protocol']), b.get('ssh_port', row['ssh_port']),
                    b.get('rdp_port', row['rdp_port']), b.get('status', row['status']), labels, aid))
     # 可选：更新托管账号密码

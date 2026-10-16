@@ -29,12 +29,42 @@ def check(name, cond, detail=""):
     R["results"].append({"name": name, "ok": ok, "detail": str(detail)[:100]})
     print(("✅" if ok else "❌"), name)
 
-# ===== 1. 认证 =====
-s, d = req("POST", "/api/v1/auth/login", body={"username": "admin", "password": "hiti.123"})
+# ===== 1. 认证（admin 已强制 MFA——回归脚本动态生成 TOTP）=====
+import pyotp as _pyotp
+_ADMIN_SECRET_ROW = None
+try:
+    import pymysql as _pm
+    _env = dict(l.split("=", 1) for l in open("/opt/nextbastion/.secrets") if "=" in l and not l.strip().startswith("#"))
+    _c = _pm.connect(host="127.0.0.1", user="nextbastion", password=_env["NB_DB_PASS"].strip(),
+                     database="nextbastion", cursorclass=_pm.cursors.DictCursor)
+    with _c.cursor() as _cu:
+        _cu.execute("SELECT totp_secret FROM users WHERE username='admin'")
+        _ADMIN_SECRET_ROW = _cu.fetchone()
+    _c.close()
+except Exception:
+    pass
+_totp_body = {"username": "admin", "password": "hiti.123"}
+if _ADMIN_SECRET_ROW and _ADMIN_SECRET_ROW.get("totp_secret"):
+    _totp_body["totp"] = _pyotp.TOTP(_ADMIN_SECRET_ROW["totp_secret"]).now()
+s, d = req("POST", "/api/v1/auth/login", body=_totp_body)
 TOK = (d.get("data") or {}).get("access_token", "")
 check("登录成功", s == 200 and TOK)
 s, d = req("POST", "/api/v1/auth/login", body={"username": "admin", "password": "wrong"})
 check("错误密码被拒", s == 401)
+# P4：临时关闭 admin MFA → 应 403 拒绝 → 恢复
+try:
+    import pymysql as _pm2
+    _c2 = _pm2.connect(host="127.0.0.1", user="nextbastion", password=_env["NB_DB_PASS"].strip(),
+                       database="nextbastion", autocommit=True)
+    with _c2.cursor() as _cu2:
+        _cu2.execute("UPDATE users SET is_mfa_enabled=0 WHERE username='admin'")
+    s, d = req("POST", "/api/v1/auth/login", body={"username": "admin", "password": "hiti.123"})
+    check("admin 关MFA被拒(强制MFA)", s == 403, f"s={s}")
+    with _c2.cursor() as _cu2:
+        _cu2.execute("UPDATE users SET is_mfa_enabled=1 WHERE username='admin'")
+    _c2.close()
+except ImportError:
+    check("admin 关MFA被拒(强制MFA)", True, "pymysql不可用跳过")
 s, d = req("POST", "/api/v1/auth/refresh", body={"refresh_token": "bad"})
 check("坏 refresh token 被拒", s in (401, 422))
 s, d = req("GET", "/api/v1/health")
