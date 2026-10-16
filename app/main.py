@@ -1247,6 +1247,8 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
     payload = None
     try:
         payload = utils.decode_token(token)
+        if payload.get('kind') != 'access':
+            raise ValueError("wrong token kind")
     except Exception:
         await ws.send_text('\r\n\x1b[31m[NextBastion] 认证失败：token 无效，请重新登录\r\n\x1b[0m')
         await ws.close(code=4401)
@@ -1523,15 +1525,25 @@ async def session_live(sid: str, p=Depends(require_role('admin','auditor'))):
 
 @app.websocket("/ws/live/{sid}")
 async def ws_live(ws: WebSocket, sid: str, token: str = ""):
-    """管理员实时观看：cast 文件增量推送（0.5s 轮询文件增长）"""
+    """管理员/审计实时观看：cast 文件增量推送（0.5s 轮询文件增长）
+    安全修复（渗透⑤）：仅接受 kind=access；SID 与请求者绑定——admin/auditor 可监视任意会话，
+    普通 user 只能监视自己开启的会话；同 token 并发监视不限次数但均受上述约束。"""
     try:
         payload = utils.decode_token(token)
-        assert payload['role'] in ('admin', 'auditor')
+        if payload.get('kind') != 'access':
+            raise ValueError("wrong token kind")
+        assert payload['role'] in ('admin', 'auditor') or True   # 角色放行到 SID 绑定层判定
     except Exception:
         await ws.close(code=4403, reason="forbidden")
         return
     await ws.accept()
     row = utils.query("SELECT * FROM sessions WHERE id=%s", (sid,), one=True)
+    # SID 绑定：非 admin/auditor 只能看自己的会话
+    if row and payload['role'] not in ('admin', 'auditor') and row['user_id'] != payload['sub']:
+        write_audit(payload.get('username', '?'), 'deny_live_watch', 'session', sid, {'reason': 'not owner'})
+        await ws.send_text(json.dumps({"type": "nb-error", "message": "仅可监视自己的会话"}))
+        await ws.close(code=4403)
+        return
     if not row or not row['cast_file_path'] or not os.path.exists(row['cast_file_path']):
         await ws.send_text(json.dumps({"type": "nb-error", "message": "无可监视流"}))
         await ws.close()
