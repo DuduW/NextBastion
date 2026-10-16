@@ -2,6 +2,7 @@
 - 文件管理会话（fsid）：短时凭证，复用五维授权 + 托管凭据
 - 目录浏览 / 上传（分片）/ 下载（流式）/ 重命名 / 删除（回收站）
 - 全量写 file_transfer_logs；高危目录副本留存（SHA256）
+- 安全层（渗透测试修复）：路径校验 / 禁 self-bastion / 敏感文件阻断
 """
 import asyncio, hashlib, json, os, time
 
@@ -18,6 +19,45 @@ RISK_DIRS = ["/etc", "/root", "/opt/nextbastion"]
 TRASH = ".nb-trash"
 MAX_UPLOAD = 2 * 1024 * 1024 * 1024   # 2GB
 
+# ===== 安全层（2026-10-16 渗透测试修复）=====
+# 上传写入黑名单：可导致 RCE/持久化的目标（cron/ssh 密钥/系统服务/自守护路径）
+UPLOAD_DENY = ["/etc/cron", "/var/spool/cron", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly",
+               "/root/.ssh", "/home/", "/etc/systemd", "/usr/lib/systemd", "/etc/sudoers",
+               "/etc/ssh", "/opt/nextbastion"]
+# 下载黑名单：堡垒机自身的敏感文件（凭据/密钥/备份/历史）——任何资产上都按文件名拦截
+SENSITIVE_NAMES = [".secrets", "initial_credentials.txt", ".bash_history", ".ssh/id_", "authorized_keys",
+                   "id_rsa", "id_ed25519", ".env", "credentials", ".mysql_history", "shadow-", ]
+SENSITIVE_PATHS = ["/opt/nextbastion", "/etc/shadow", "/etc/gshadow"]
+
+
+def _self_asset(asset: dict) -> bool:
+    """资产即堡垒机自身（127.0.0.1 / 本机 IP）→ 禁止文件会话（防自守护接管）"""
+    ip = (asset.get("ip") or "").strip()
+    return ip in ("127.0.0.1", "localhost", "::1")
+
+
+def _check_download(path: str) -> None:
+    """敏感文件下载阻断；命中 raise PermissionError"""
+    p = (path or "").strip()
+    low = p.lower()
+    for d in SENSITIVE_PATHS:
+        if low == d or low.startswith(d + "/"):
+            raise PermissionError(f"禁止下载堡垒机敏感路径: {d}")
+    import re as _re
+    name = p.rsplit("/", 1)[-1].lower()
+    for n in SENSITIVE_NAMES:
+        if n in name or n in low:
+            raise PermissionError(f"禁止下载敏感文件: {name}")
+
+
+def _check_upload(path: str) -> None:
+    """高危写入阻断（cron/ssh 密钥/系统服务）；命中 raise PermissionError"""
+    p = (path or "").strip()
+    low = p.lower()
+    for d in UPLOAD_DENY:
+        if low == d or low.startswith(d + "/"):
+            raise PermissionError(f"禁止写入高危路径: {d}")
+
 
 def _risk(path: str) -> bool:
     p = (path or "").rstrip("/")
@@ -33,6 +73,9 @@ async def open_session(user: dict, asset: dict, account: dict) -> str:
     cfg = merged_session_config(user, asset["id"], account["username"])
     if cfg.get("sftp") is not True:
         raise PermissionError("file transfer not granted by policy")
+    # 安全修复③：资产=堡垒机自身 → 拒绝文件会话（SFTP 读写堡垒机文件=接管）
+    if _self_asset(asset):
+        raise PermissionError("禁止对堡垒机自身发起文件管理会话")
     secret = utils.decrypt_secret(account["secret_encrypted"])
     conn = await asyncio.wait_for(
         asyncssh.connect(asset["ip"], port=asset["ssh_port"] or 22,
@@ -110,8 +153,25 @@ async def list_dir(fsid: str, path: str) -> dict:
     return {"cwd": path, "items": items}
 
 
+async def stat_file(fsid: str, path: str) -> dict:
+    """R4: 远端文件元信息（断点续传探查已传大小）"""
+    s = _sess(fsid)
+    sf = await _sftp(s)
+    try:
+        st = await sf.stat(path)
+    except Exception:
+        return {"exists": False, "size": 0}
+    import stat as _st
+    mode = getattr(st, "st_mode", None) or getattr(st, "mode", 0)
+    return {"exists": True,
+            "size": getattr(st, "st_size", None) or getattr(st, "size", 0) or 0,
+            "mtime": int(getattr(st, "st_mtime", None) or getattr(st, "mtime", 0) or 0),
+            "is_dir": bool(_st.S_ISDIR(mode))}
+
+
 async def download(fsid: str, path: str) -> dict:
-    """返回 {f, size}；高危目录同步留存副本"""
+    """返回 {f, size}；高危目录同步留存副本；敏感文件阻断"""
+    _check_download(path)   # 安全修复②：堡垒机敏感文件禁下载
     s = _sess(fsid)
     sf = await _sftp(s)
     f = await sf.open(path, "rb")
@@ -142,7 +202,8 @@ async def download(fsid: str, path: str) -> dict:
 
 
 async def upload_chunk(fsid: str, path: str, offset: int, data: bytes, append: bool = False) -> int:
-    """分片上传：append 模式续传。返回已写偏移"""
+    """分片上传：append 模式续传。返回已写偏移；高危路径阻断"""
+    _check_upload(path)   # 安全修复①：cron/ssh密钥/系统路径禁写（RCE 防护）
     s = _sess(fsid)
     sf = await _sftp(s)
     mode = "ab" if append else "wb"

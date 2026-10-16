@@ -121,17 +121,24 @@ check("会话导出CSV", s == 200)
 s, d = req("GET", "/api/v1/export/commands", token=TOK)
 check("命令导出CSV", s == 200)
 
-# ===== 7. SFTP 全链路（托管账号 资产1）=====
+# ===== 7. SFTP 全链路（托管账号 资产81 可达外部主机）=====
+# 安全修复③：资产1(self-bastion)/102(127.0.0.1) 文件会话被禁——先断言 403 再用 81 测正常链路
 s, d = req("POST", "/api/v1/files/1/1/session", token=TOK)
+check("self-bastion 文件会话拦截(403)", s == 403, f"s={s}")
+s, d = req("POST", "/api/v1/files/81/45/session", token=TOK)
 fsid = (d.get("data") or {}).get("fsid", "")
-check("SFTP 会话建立", s == 200 and fsid)
+check("SFTP 会话建立(资产81)", s == 200 and fsid)
 if fsid:
     s, d = req("GET", f"/api/v1/files/{fsid}/list?path=/tmp", token=TOK)
     check("SFTP 列目录", s == 200 and (d.get("data") or {}).get("items") is not None)
     s, d = req("POST", f"/api/v1/files/{fsid}/upload?path=/tmp/api_test.txt&offset=0&append=0&last=1", token=TOK, raw=b"api test")
     check("SFTP 上传", s == 200)
     s, d = req("GET", f"/api/v1/files/{fsid}/download?path=/etc/hosts", token=TOK)
-    check("SFTP 高危下载+副本", s == 200)
+    check("SFTP 普通下载", s == 200)
+    s, d = req("GET", f"/api/v1/files/{fsid}/download?path=/root/.bash_history", token=TOK)
+    check("敏感下载拦截(403)", s == 403, f"s={s}")
+    s, d = req("POST", f"/api/v1/files/{fsid}/upload?path=/etc/cron.d/x&offset=0&append=0&last=1", token=TOK, raw=b"x")
+    check("高危上传拦截(403)", s == 403, f"s={s}")
     s, d = req("POST", f"/api/v1/files/{fsid}/op", token=TOK, body={"op": "rename", "old": "/tmp/api_test.txt", "new": "/tmp/api_test2.txt"})
     check("SFTP 重命名", s == 200)
     s, d = req("POST", f"/api/v1/files/{fsid}/op", token=TOK, body={"op": "delete", "path": "/tmp/api_test2.txt"})
@@ -140,13 +147,13 @@ if fsid:
     check("SFTP 断开", s == 200)
     s, d = req("GET", f"/api/v1/files/{fsid}/list?path=/tmp", token=TOK)
     check("断开后操作 410", s == 410)
-# 临时凭据 SFTP（无托管资产 102；注：若限流窗口内会 429——测试机此前触发过限流属正常）
+# 临时凭据 SFTP（无托管资产 102=127.0.0.1 → 预期 403 拦截；限流窗口 429 亦可）
 s, d = req("POST", "/api/v1/temp-cred", token=TOK, body={"asset_id": 102, "login": "root", "password": "hiti.123"})
 tc = (d.get("data") or {}).get("ticket", "")
 check("临时凭据签发(600s)", (s == 200 and (d.get("data") or {}).get("expires_in") == 600) or s == 429, f"s={s}")
 if tc:
     s, d = req("POST", "/api/v1/files/102/0/session?ct=" + tc, token=TOK, body={})
-    check("临时凭据 SFTP 会话", s == 200)
+    check("临时凭据 SFTP 对 self 资产拦截(403)", s == 403, f"s={s}")
 
 # ===== 8. Syslog 配置 =====
 s, d = req("GET", "/api/v1/settings/syslog", token=TOK)

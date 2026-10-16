@@ -1638,7 +1638,8 @@ async def set_webhook(request: Request, p=Depends(require_role('admin'))):
 
 @app.post("/api/v1/settings/webhook/test")
 async def test_webhook(request: Request, p=Depends(require_role('admin'))):
-    """向已保存（或请求体临时提交）的 webhook 发送测试消息，逐 URL 返回成败与耗时"""
+    """向已保存（或请求体临时提交）的 webhook 发送测试消息，逐 URL 返回成败与耗时
+    安全修复④（SSRF）：仅 http/https + 公网地址；错误信息统一（去差异 oracle）"""
     b = await request.json()
     # 优先用请求体里的（未保存也可测），否则用已保存配置
     urls = [u.strip() for u in (b.get('urls') or '').splitlines() if u.strip()]
@@ -1650,22 +1651,49 @@ async def test_webhook(request: Request, p=Depends(require_role('admin'))):
             urls = []
     if not urls:
         return utils.ok({"results": [], "message": "未配置任何 Webhook 地址"})
-    import urllib.request, time as _t
+    import urllib.request, time as _t, ipaddress, socket as _sock
+    from urllib.parse import urlparse
+
+    def _validate_webhook_url(u: str) -> str | None:
+        """返回拒绝原因；None=允许。仅 http(s) 且目标为公网。"""
+        try:
+            pr = urlparse(u)
+        except Exception:
+            return "URL 格式错误"
+        if pr.scheme not in ("http", "https"):
+            return f"仅支持 http/https（{pr.scheme or '空'} 协议被拒绝）"
+        if not pr.hostname:
+            return "URL 缺少主机名"
+        try:
+            infos = _sock.getaddrinfo(pr.hostname, pr.port or (443 if pr.scheme == 'https' else 80), _sock.AF_UNSPEC, _sock.SOCK_STREAM)
+        except Exception:
+            return "域名解析失败"
+        for ai in infos:
+            ip = ipaddress.ip_address(ai[4][0])
+            if not ip.is_global:
+                return "禁止指向内网/回环/链路本地地址"
+        return None
+
     results = []
     payload = json.dumps({"msgtype": "text", "text": {
         "content": f"[NextBastion] ✅ Webhook 连通性测试\n由 {p['username']} 于 {datetime.now()} 触发\n收到此消息说明高危命令告警通道正常。"}
     }).encode()
     for u in urls:
         t0 = _t.time()
+        deny = _validate_webhook_url(u)
+        if deny:
+            results.append({"url": u, "ok": False, "error": deny, "ms": 0})
+            continue
         try:
             req = urllib.request.Request(u, data=payload, headers={"Content-Type": "application/json"})
             resp = urllib.request.urlopen(req, timeout=5)
             code = getattr(resp, 'status', None) or resp.getcode()
             ms = int((_t.time() - t0) * 1000)
             results.append({"url": u, "ok": True, "status": code, "ms": ms})
-        except Exception as e:
-            ms = int((_t.time() - t0) * 1000)
-            results.append({"url": u, "ok": False, "error": str(e)[:120], "ms": ms})
+        except Exception:
+            # 安全修复：不回显异常原文（连接差异/端口扫描 oracle）；不暴露精确 ms
+            ms = int((_t.time() - t0) * 1000 // 500 * 500)
+            results.append({"url": u, "ok": False, "error": "目标不可达或响应异常", "ms": ms})
     ok_n = sum(1 for r in results if r['ok'])
     return utils.ok({"results": results, "message": f"{ok_n}/{len(results)} 个地址测试成功"})
 
@@ -1682,10 +1710,23 @@ async def notify_alert(cmdline, rule, username, hostname):
             return
         urls = (json.loads(row['detail']) or {}).get('urls', [])
         import urllib.request
+        from urllib.parse import urlparse as _up
+        import ipaddress as _ipa, socket as _sk
         payload = json.dumps({"msgtype": "text", "text": {
             "content": f"[NextBastion 高危告警]\n用户: {username}\n资产: {hostname}\n命令: {cmdline[:200]}\n规则: {rule}\n时间: {datetime.now()}"}
         }).encode()
+        def _webhook_ok(u):
+            try:
+                pr=_up(u)
+                if pr.scheme not in ("http","https"): return False
+                for ai in _sk.getaddrinfo(pr.hostname, pr.port or 80, _sk.AF_UNSPEC, _sk.SOCK_STREAM):
+                    if not _ipa.ip_address(ai[4][0]).is_global: return False
+                return True
+            except Exception:
+                return False
         for u in urls:
+            if not _webhook_ok(u):
+                continue
             try:
                 req = urllib.request.Request(u, data=payload, headers={"Content-Type": "application/json"})
                 urllib.request.urlopen(req, timeout=3)
@@ -1732,6 +1773,9 @@ async def file_session(asset_id: int, account_id: int, request: Request = None, 
         write_audit(p['username'], 'deny_fileman', 'asset', asset_id,
                     {'reason': str(e) or 'no policy'})
         msg = "无该资产的访问授权" if "not granted" not in str(e) else "该资产的授权策略未开启「文件传输」权限（请联系管理员在授权策略中勾选）"
+        # 安全层拒绝（敏感下载/高危上传/堡垒机自身）直接透传原因
+        if "禁止" in str(e):
+            msg = str(e)
         raise HTTPException(403, msg)
     except asyncio.TimeoutError:
         raise HTTPException(502, "SSH 连接超时")
@@ -1785,8 +1829,11 @@ async def file_upload(fsid: str, request: Request, p=Depends(auth)):
         return utils.ok({"offset": written})
     except KeyError:
         raise HTTPException(410, "文件会话已过期")
-    except Exception as e:
-        raise HTTPException(500, str(e)[:100])
+    except PermissionError as e:
+        write_audit(p['username'], 'deny_upload', 'file', path, {'reason': str(e)})
+        raise HTTPException(403, str(e))
+    except Exception:
+        raise HTTPException(500, "上传失败")
 
 @app.get("/api/v1/files/{fsid}/stat")
 async def file_stat(fsid: str, path: str, p=Depends(auth)):
@@ -1804,8 +1851,11 @@ async def file_download(fsid: str, path: str, p=Depends(auth)):
         raise HTTPException(410, "文件会话已过期")
     except FileNotFoundError:
         raise HTTPException(404, "文件不存在")
-    except Exception as e:
-        raise HTTPException(500, str(e)[:100])
+    except PermissionError as e:
+        write_audit(p['username'], 'deny_download', 'file', path, {'reason': str(e)})
+        raise HTTPException(403, str(e))
+    except Exception:
+        raise HTTPException(500, "下载失败")
     return StreamingResponse(r["f"], media_type="application/octet-stream",
                              headers={"Content-Disposition":
                                       f"attachment; filename*=UTF-8''{__import__('urllib.parse', fromlist=['quote']).quote(os.path.basename(path))}"})
