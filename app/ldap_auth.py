@@ -138,20 +138,39 @@ def test_connection(cfg=None):
 
 
 def _resolve_role(cfg, member_of):
-    """多 DN 角色映射：admin > auditor > default_role（多命中取最高权限）"""
+    """角色解析（多来源，优先级从高到低）：
+    ① 新版 group_maps=[{src,dst:'admin|auditor|user'}]（系统设置④ 角色组映射，多命中取最高）
+    ② role_map（{admin:[dn],auditor:[dn]}）
+    ③ 旧单 DN map_admin/map_auditor
+    ④ default_role"""
     mos = [str(x).lower() for x in (member_of or [])]
+    hits = {"admin": False, "auditor": False}
+    # ① 新版 group_maps（dst 为角色字符串）
+    try:
+        maps = json.loads(cfg.get("group_maps") or "[]")
+        for m in maps:
+            dst = str(m.get("dst", ""))
+            if dst in hits and str(m.get("src", "")).lower() in mos:
+                hits[dst] = True
+    except Exception:
+        pass
+    # ②③ role_map + 旧单 DN（get_role_map 已合并）
     rm = get_role_map(cfg)
     for dn in rm.get("admin", []):
         if dn.lower() in mos:
-            return "admin"
+            hits["admin"] = True
     for dn in rm.get("auditor", []):
         if dn.lower() in mos:
-            return "auditor"
+            hits["auditor"] = True
+    if hits["admin"]:
+        return "admin"
+    if hits["auditor"]:
+        return "auditor"
     return cfg.get("default_role") or "user"
 
 
 def _resolve_group_ids(cfg, member_of):
-    """目录组 → 本地用户组 id 列表"""
+    """目录组 → 本地用户组 id 列表（旧格式 dst=组id；新格式 dst=角色串 跳过——角色由 _resolve_role 处理）"""
     try:
         maps = json.loads(cfg.get("group_maps") or "[]")
     except Exception:
@@ -159,6 +178,9 @@ def _resolve_group_ids(cfg, member_of):
     mos = [str(x).lower() for x in (member_of or [])]
     gids = []
     for m in maps:
+        dst = m.get("dst")
+        if isinstance(dst, str):   # 新格式（角色映射）不进组
+            continue
         if str(m.get("src", "")).lower() in mos:
             g = utils.query("SELECT id FROM user_groups WHERE id=%s", (m.get("dst"),), one=True)
             if g:

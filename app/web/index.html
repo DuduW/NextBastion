@@ -449,7 +449,6 @@ async users(){
   const tr=rows.map(u=>`<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.display_name||'-')}</td>
     <td>${{admin:'管理员',auditor:'审计员',user:'用户'}[u.role]||u.role}</td>
     <td>${u.auth_source==='ldap'?badge('目录','purple'):badge('本地','gray')}</td>
-    <td>${esc(u.group_names||'-')}</td>
     <td>${u.is_mfa_enabled?badge('已启用','green'):badge('未启用','red')}</td>
     <td>${u.is_active?badge('正常','green'):badge('禁用','red')}</td>
     <td style="white-space:nowrap">
@@ -459,7 +458,7 @@ async users(){
     </td></tr>`).join('');
   return `<div class="page-head"><div><h2>用户管理</h2><div class="sub">共 ${rows.length} 个用户 · 目录用户由 LDAP 同步，本地用户新建自动生成 TOTP</div></div>
     <button class="btn btn-primary" onclick="userForm()">+ 新建用户</button></div>
-  <div class="card">${rows.length?`<table id="usr-table"><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>来源</th><th>用户组</th><th>TOTP</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户</div>'}</div>
+  <div class="card">${rows.length?`<table id="usr-table"><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>来源</th><th>TOTP</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户</div>'}</div>
 `;
 },
 async roles(){
@@ -479,18 +478,7 @@ async roles(){
     <td>${m.auditor===true?'<span style="color:var(--green);font-weight:600">✔</span>':'<span style="color:var(--text-3)">—</span>'}</td>
     <td>${m.user===true?'<span style="color:var(--green);font-weight:600">✔</span>':m.user==='own'?'<span class="hint">仅自己</span>':'<span style="color:var(--text-3)">—</span>'}</td></tr>`).join('');
   const rmap=rs.role_map||{};
-  const mapCard=(role,label)=>{
-    const dns=rmap[role]||[];
-    return `<div style="border:1.5px dashed var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px">
-      <b>${label}</b> ${role==='user'?'<span class="hint">（未命中映射时 → 默认角色）</span>':''}
-      <div id="map-${role}" style="margin-top:6px">${dns.map(d=>roleDn(d,role)).join('')||'<span class="hint">无映射</span>'}</div>
-      ${role!=='user'?`<div style="margin-top:6px;display:flex;gap:6px">
-        <input id="add-${role}" placeholder="cn=group,ou=groups,dc=..." style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text)">
-        <button class="btn btn-sm btn-ghost" onclick="addRoleDn('${role}')">＋添加</button>
-        <button class="btn btn-sm btn-ghost" onclick="pickLdapGroup('${role}')">🔍 从 LDAP 选择</button></div>`:''}
-    </div>`;
-  };
-  return `<div class="page-head"><div><h2>角色管理</h2><div class="sub">系统内置 3 角色 · 权限矩阵 · LDAP 角色组映射 · 默认角色</div></div></div>
+  return `<div class="page-head"><div><h2>角色管理</h2><div class="sub">系统内置 3 角色 · 权限矩阵 · 默认角色（LDAP 角色映射在 系统设置 → 目录认证 配置）</div></div></div>
   <div class="card"><h3 style="margin-bottom:12px">系统角色</h3>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">${cards}</div></div>
   <div class="card"><h3>角色权限矩阵</h3>
@@ -500,14 +488,7 @@ async roles(){
       <select id="def-role">${['user','auditor','admin'].map(r=>`<option value="${r}"${rs.default_role===r?' selected':''}>${{admin:'管理员',auditor:'审计员',user:'用户'}[r]}</option>`).join('')}</select>
       <button class="btn" onclick="saveRoleSettings()">保存</button>
       <span class="hint">新建用户 & LDAP 同步未命中映射时的兜底角色</span></div></div>
-  <div class="card"><h3>LDAP 角色组映射</h3>
-    <div class="hint" style="margin-bottom:10px">同步规则：memberOf 命中映射 DN → 对应角色；多命中取最高权限 admin &gt; auditor &gt; user ${rs.ldap_enabled?'':'（LDAP 当前未启用，配置先行保存）'}</div>
-    ${mapCard('admin','👑 管理员')}
-    ${mapCard('auditor','📜 审计员')}
-    ${mapCard('user','👤 用户')}
-    <div style="display:flex;gap:8px;margin-top:4px">
-      <button class="btn" onclick="saveRoleSettings()">保存映射</button>
-      <button class="btn btn-ghost" onclick="ldapSyncNow()">🔄 立即同步</button></div></div>`;
+`;
 },
 async filters(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
@@ -646,7 +627,7 @@ async settings(){
           <input id="ldap-map-auditor" value="cn=bastion-auditors,ou=groups,dc=example,dc=com" class="mono" style="margin-top:4px;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px"></label>
       </div>
 
-      <div style="font-size:12px;font-weight:600;color:var(--primary);margin:6px 0 8px">④ 用户组映射<div style="font-size:10.5px;color:var(--text-3);font-weight:400">目录组 → 本地用户组，组成员自动继承该组全部授权策略</div></div>
+      <div style="font-size:12px;font-weight:600;color:var(--primary);margin:6px 0 8px">④ 角色组映射<div style="font-size:10.5px;color:var(--text-3);font-weight:400">目录组 DN → 系统角色；登录/同步时 memberOf 命中即授予对应角色（多命中取最高 admin &gt; auditor &gt; user）</div></div>
       <div id="ldap-groupmap" style="display:grid;gap:8px;margin-bottom:14px"></div>
       <button class="btn btn-ghost" style="font-size:12px" onclick="ldapAddMap()">+ 添加组映射</button>
 
@@ -883,17 +864,10 @@ async function pickLdapGroup(role){
   }catch(e){toast(e.message||'拉取失败')}
 }
 async function saveRoleSettings(){
-  const role_map={admin:[],auditor:[]};
-  ['admin','auditor'].forEach(r=>{
-    document.querySelectorAll('#map-'+r+' [data-dn]').forEach(sp=>{
-      const t=(sp.dataset.dn||'').trim();
-      if(t)role_map[r].push(t);
-    });
-  });
   const default_role=document.getElementById('def-role')?.value||'user';
   try{
-    await api('/role-settings',{method:'PUT',body:JSON.stringify({default_role,role_map})});
-    toast('已保存');go('roles');
+    await api('/role-settings',{method:'PUT',body:JSON.stringify({default_role})});
+    toast('已保存');
   }catch(e){toast(e.message||'保存失败')}
 }
 function roleUsers(role){
@@ -1212,7 +1186,6 @@ async function userForm(id){
       is_active:old.is_active,is_mfa_enabled:old.is_mfa_enabled,
       groups:(old.group_names||'').split(',').filter(Boolean)};title='编辑用户 · '+old.username;}
   }
-  const gCheck=groups.map(g=>`<label><input type="checkbox" id="ug-${g.id}" ${u.groups.includes(g.name)?'checked':''}> ${esc(g.name)}</label>`).join('');
   openModal(`
   <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
   <div class="modal-body">
@@ -1220,7 +1193,6 @@ async function userForm(id){
     ${mRow('显示名','<input id="um-disp" value="'+esc(u.display_name)+'" placeholder="如 张伟">')}
     ${mRow('角色','<select id="um-role"><option value="user" '+(u.role==='user'?'selected':'')+'>运维用户</option><option value="auditor" '+(u.role==='auditor'?'selected':'')+'>安全审计员</option><option value="admin" '+(u.role==='admin'?'selected':'')+'>系统管理员</option></select>')}
     ${mRow('密码',`<input id="um-pass" type="password" placeholder="${id?'留空则不修改':'留空默认 ChangeMe@2026'}">`)}
-    ${mRow('用户组',`<div class="m-check">${gCheck}</div>`)}
     ${mRow('TOTP 双因子',`<div class="m-check">
       <label><span class="switch"><input type="checkbox" id="um-mfa" ${u.is_mfa_enabled?'checked':''}><span class="sl"></span></span>启用 MFA</label>
     </div>`)}
@@ -1234,13 +1206,12 @@ async function userForm(id){
   </div>`);
 }
 async function saveUser(id){
-  const groups=(window.__groups||[]).filter(g=>document.getElementById('ug-'+g.id)?.checked).map(g=>g.id);
   if(id){
     const body={
       display_name:document.getElementById('um-disp').value.trim(),
       role:document.getElementById('um-role').value,
       password:document.getElementById('um-pass').value||undefined,
-      groups,is_mfa_enabled:document.getElementById('um-mfa').checked,
+      is_mfa_enabled:document.getElementById('um-mfa').checked,
       reset_totp:document.getElementById('um-rtotp')?.checked||false
     };
     try{
@@ -1593,7 +1564,10 @@ async function ldapLoad(){
       document.getElementById('ldap-userfilter').value=c.user_filter||'(objectClass=inetOrgPerson)';
       document.getElementById('ldap-map-admin').value=c.map_admin||'';
       document.getElementById('ldap-map-auditor').value=c.map_auditor||'';
-      const maps=(()=>{try{return JSON.parse(c.group_maps||'[]')}catch(e){return[]}})();
+      // 角色映射回显：新格式 group_maps=[{src,dst:'admin|auditor|user'}]；旧组 id 映射忽略
+      const maps=(()=>{try{return JSON.parse(c.group_maps||'[]').filter(m=>typeof m.dst==='string')}catch(e){return[]}})();
+      // 兼容：若 role_map（角色管理遗留）有值也并入显示
+      try{const rm=JSON.parse(c.role_map||'{}');(rm.admin||[]).forEach(dn=>maps.push({src:dn,dst:'admin'}));(rm.auditor||[]).forEach(dn=>maps.push({src:dn,dst:'auditor'}));}catch(e){}
       document.getElementById('ldap-groupmap').innerHTML='';
       maps.forEach(m=>{ldapAddMap();const rows=document.querySelectorAll('#ldap-groupmap > div');const r=rows[rows.length-1];
         r.querySelector('.ldap-src').value=m.src;r.querySelector('.ldap-dst').value=m.dst;});
@@ -1607,12 +1581,12 @@ function ldapToggle(){
   document.getElementById('ldap-state').textContent=on?'当前：已启用（登录走目录认证）':'当前：未启用';
   if(on&&!document.getElementById('ldap-groupmap').children.length)ldapAddMap();
 }
+const ROLE_OPTS=[['admin','👑 管理员'],['auditor','📜 审计员'],['user','👤 用户']];
 function ldapAddMap(){
-  const groups=(window.__groups||[{id:1,name:'infra'},{id:2,name:'dev'},{id:3,name:'dba'}]);
-  const opts=groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  const opts=ROLE_OPTS.map(r=>`<option value="${r[0]}">${r[1]}</option>`).join('');
   const row=document.createElement('div');
   row.style.cssText='display:grid;grid-template-columns:1fr 34px 200px 40px;gap:10px;align-items:center';
-  row.innerHTML=`<input class="mono ldap-src" placeholder="cn=infra,ou=groups,dc=example,dc=com" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
+  row.innerHTML=`<input class="mono ldap-src" placeholder="cn=bastion-admins,ou=groups,dc=example,dc=com" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">
     <span style="color:var(--text-3);text-align:center">→</span>
     <select class="ldap-dst" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12.5px">${opts}</select>
     <button class="btn btn-sm btn-danger" onclick="this.closest('div').remove()">✕</button>`;
@@ -1620,7 +1594,7 @@ function ldapAddMap(){
 }
 function ldapCollect(){
   const maps=[...document.querySelectorAll('#ldap-groupmap > div')].map(r=>({
-    src:r.querySelector('.ldap-src').value.trim(),dst:+r.querySelector('.ldap-dst').value}));
+    src:r.querySelector('.ldap-src').value.trim(),dst:r.querySelector('.ldap-dst').value}));
   return {
     enabled:document.getElementById('ldap-enabled').checked,
     url:document.getElementById('ldap-url').value.trim(),
