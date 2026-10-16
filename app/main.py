@@ -15,7 +15,8 @@ from starlette.websockets import WebSocketState
 import utils
 from config import DEFAULT_FILTER_RULES, RDP_TOKEN_TTL, RECORD_DIR
 
-app = FastAPI(title="NextBastion", version="1.0.0")
+app = FastAPI(title="NextBastion", version="1.0.0",
+              docs_url=None, redoc_url=None, openapi_url=None)   # P1 安全：生产关闭交互式文档与 OpenAPI 蓝图
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 RDP_TOKENS = {}      # token -> {asset_id, account_id, user_id, exp}
@@ -1528,7 +1529,8 @@ async def intercept_command(sid: str, user_id: int, asset_id: int, cmdline: str)
 # ============================================================
 @app.get("/api/v1/health")
 async def health():
-    return utils.ok({"status": "up", "time": datetime.now().isoformat(), "version": "1.0.0"})
+    # P3 安全：去除 version 字段（防版本指纹）
+    return utils.ok({"status": "up", "time": datetime.now().isoformat()})
 
 # ============================================================
 # 12. V1.1 P1 功能（监视/导入/探测/导出/告警）
