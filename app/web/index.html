@@ -135,7 +135,7 @@
       <div class="nav-item" data-page="nodes" data-roles="admin"><span class="ic">🌲</span>节点管理</div>
       <div class="nav-item" data-page="policies" data-roles="admin"><span class="ic">🔐</span>授权管理</div>
       <div class="nav-item" data-page="users" data-roles="admin"><span class="ic">👥</span>用户管理</div>
-      <div class="nav-item" data-page="groups" data-roles="admin"><span class="ic">👨‍👩‍👧‍👦</span>用户组管理</div>
+      <div class="nav-item" data-page="roles" data-roles="admin"><span class="ic">🎭</span>角色管理</div>
       <div class="nav-item" data-page="filters" data-roles="admin"><span class="ic">🧯</span>高危规则</div>
       <div class="nav-item" data-page="settings" data-roles="admin"><span class="ic">⚙️</span>系统设置</div>
       <div class="nav-group">审计中心</div>
@@ -237,7 +237,7 @@ function applyNavRoles(){
     i.style.display = rs.includes(USER&&USER.role)?'':'none';
   });
 }
-const PAGE_ROLES={assets:['admin'],nodes:['admin'],policies:['admin'],users:['admin'],groups:['admin'],filters:['admin'],settings:['admin'],active:['admin','auditor'],sessions:['admin','auditor'],commands:['admin','auditor']};
+const PAGE_ROLES={assets:['admin'],nodes:['admin'],policies:['admin'],users:['admin'],roles:['admin'],filters:['admin'],settings:['admin'],active:['admin','auditor'],sessions:['admin','auditor'],commands:['admin','auditor']};
 function pageAllowed(p){const rs=PAGE_ROLES[p];return !rs||rs.includes(USER&&USER.role)}
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('login-page').style.display!=='none')doLogin()});
 function logout(){TOKEN='';USER=null;sessionStorage.clear();location.reload()}
@@ -246,7 +246,7 @@ document.querySelectorAll('.nav-item[data-page]').forEach(i=>i.onclick=()=>go(i.
 function go(page){
   if(!pageAllowed(page)){toast('无权访问该页面');page='myassets'}
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active',i.dataset.page===page));
-  (PAGES[page]||PAGES.dashboard)().then(html=>{document.getElementById('main').innerHTML=html;if(page==='settings'){if(typeof ldapLoad==='function')ldapLoad();if(typeof foRefresh==='function')foRefresh();const u=document.getElementById('sysinfo-url');if(u){u.innerHTML='<span class=\'mono\'>'+esc(location.host)+'</span> · <b>'+esc(location.protocol==='https:'?'HTTPS':'HTTP')+'</b>';}}if(page==='myassets')myAssetsFilter();if(page==='assets')assetsFilter();if(page==='policies')paginateTable('#pol-table','pol');if(page==='users')paginateTable('#usr-table','usr');if(page==='groups')paginateTable('#grp-table','grp');});
+  (PAGES[page]||PAGES.dashboard)().then(html=>{document.getElementById('main').innerHTML=html;if(page==='settings'){if(typeof ldapLoad==='function')ldapLoad();if(typeof foRefresh==='function')foRefresh();const u=document.getElementById('sysinfo-url');if(u){u.innerHTML='<span class=\'mono\'>'+esc(location.host)+'</span> · <b>'+esc(location.protocol==='https:'?'HTTPS':'HTTP')+'</b>';}}if(page==='myassets')myAssetsFilter();if(page==='assets')assetsFilter();if(page==='policies')paginateTable('#pol-table','pol');if(page==='users'){if(window.__roleFilter){const sel=document.getElementById('u-role-q');if(sel){sel.value=window.__roleFilter;}window.__roleUsersFilter&&window.__roleUsersFilter();window.__roleFilter=null;}paginateTable('#usr-table','usr');}});
 }
 
 function foChip(v,fk){
@@ -462,22 +462,52 @@ async users(){
   <div class="card">${rows.length?`<table id="usr-table"><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>来源</th><th>用户组</th><th>TOTP</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户</div>'}</div>
 `;
 },
-async groups(){
+async roles(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
-  const rows=await api('/users/groups');
-  window.__groupRows=rows;
-  const tr=rows.map(g=>`<tr><td><b>${esc(g.name)}</b></td><td>${esc(g.description||'-')}</td>
-    <td>${g.member_count>0?badge(g.member_count+' 人','blue'):'-'}</td>
-    <td>${g.id===1?badge('系统内置','gray'):''}</td>
-    <td style="white-space:nowrap">
-      <button class="btn btn-sm btn-ghost" onclick="groupForm(${g.id})">编辑</button>
-      <button class="btn btn-sm btn-ghost" onclick="viewGroupMembers(${g.id},'${esc(g.name)}')">成员</button>
-      ${g.id===1?'':`<button class="btn btn-sm btn-danger" onclick="delGroup(${g.id},'${esc(g.name)}')">删除</button>`}
-    </td></tr>`).join('');
-  return `<div class="page-head"><div><h2>用户组管理</h2><div class="sub">共 ${rows.length} 个组 · 授权策略可按组批量授权</div></div>
-    <button class="btn btn-primary" onclick="groupForm()">+ 新建用户组</button></div>
-  <div class="card">${rows.length?`<table id="grp-table"><thead><tr><th>组名</th><th>描述</th><th>成员数</th><th>备注</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无用户组</div>'}</div>
-`;
+  const [rs, rm]=await Promise.all([api('/role-matrix'),api('/role-settings')]);
+  const roleMeta={'admin':{ic:'👑',desc:'全功能：资产/授权/用户/审计/系统设置'},'auditor':{ic:'📜',desc:'只读审计：在线会话/回放/命令/传输'},'user':{ic:'👤',desc:'自助使用：我的资产/会话（受五维授权约束）'}};
+  const cnt=rm.counts||{};
+  const cards=Object.keys(roleMeta).map(r=>`
+    <div class="rolecard" style="border:1.5px solid var(--border);border-radius:14px;padding:16px;position:relative">
+      <span style="font-size:26px">${roleMeta[r].ic}</span><b style="display:block;font-size:15px;margin:6px 0 2px">${{admin:'管理员',auditor:'审计员',user:'用户'}[r]} · ${r}</b>
+      <div style="color:var(--text-3);font-size:12px;min-height:34px">${roleMeta[r].desc}</div>
+      <span class="badge badge-blue" style="margin-top:6px">${cnt[r]||0} 个用户</span>
+      <button class="btn btn-sm btn-ghost" style="position:absolute;top:12px;right:12px" onclick="roleUsers('${r}')">管理用户</button>
+    </div>`).join('');
+  const mx=(rm.matrix||[]).map(m=>`<tr><td>${esc(m.page)}</td>
+    <td>${m.admin===true?'<span style="color:var(--green);font-weight:600">✔</span>':'<span style="color:var(--text-3)">—</span>'}</td>
+    <td>${m.auditor===true?'<span style="color:var(--green);font-weight:600">✔</span>':'<span style="color:var(--text-3)">—</span>'}</td>
+    <td>${m.user===true?'<span style="color:var(--green);font-weight:600">✔</span>':m.user==='own'?'<span class="hint">仅自己</span>':'<span style="color:var(--text-3)">—</span>'}</td></tr>`).join('');
+  const rmap=rs.role_map||{};
+  const mapCard=(role,label)=>{
+    const dns=rmap[role]||[];
+    return `<div style="border:1.5px dashed var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px">
+      <b>${label}</b> ${role==='user'?'<span class="hint">（未命中映射时 → 默认角色）</span>':''}
+      <div id="map-${role}" style="margin-top:6px">${dns.map(d=>roleDn(d,role)).join('')||'<span class="hint">无映射</span>'}</div>
+      ${role!=='user'?`<div style="margin-top:6px;display:flex;gap:6px">
+        <input id="add-${role}" placeholder="cn=group,ou=groups,dc=..." style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text)">
+        <button class="btn btn-sm btn-ghost" onclick="addRoleDn('${role}')">＋添加</button>
+        <button class="btn btn-sm btn-ghost" onclick="pickLdapGroup('${role}')">🔍 从 LDAP 选择</button></div>`:''}
+    </div>`;
+  };
+  return `<div class="page-head"><div><h2>角色管理</h2><div class="sub">系统内置 3 角色 · 权限矩阵 · LDAP 角色组映射 · 默认角色</div></div></div>
+  <div class="card"><h3 style="margin-bottom:12px">系统角色</h3>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">${cards}</div></div>
+  <div class="card"><h3>角色权限矩阵</h3>
+    <table><thead><tr><th>页面 / 能力</th><th>admin</th><th>auditor</th><th>user</th></tr></thead><tbody>${mx}</tbody></table></div>
+  <div class="card"><h3>默认角色</h3>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <select id="def-role">${['user','auditor','admin'].map(r=>`<option value="${r}"${rs.default_role===r?' selected':''}>${{admin:'管理员',auditor:'审计员',user:'用户'}[r]}</option>`).join('')}</select>
+      <button class="btn" onclick="saveRoleSettings()">保存</button>
+      <span class="hint">新建用户 & LDAP 同步未命中映射时的兜底角色</span></div></div>
+  <div class="card"><h3>LDAP 角色组映射</h3>
+    <div class="hint" style="margin-bottom:10px">同步规则：memberOf 命中映射 DN → 对应角色；多命中取最高权限 admin &gt; auditor &gt; user ${rs.ldap_enabled?'':'（LDAP 当前未启用，配置先行保存）'}</div>
+    ${mapCard('admin','👑 管理员')}
+    ${mapCard('auditor','📜 审计员')}
+    ${mapCard('user','👤 用户')}
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <button class="btn" onclick="saveRoleSettings()">保存映射</button>
+      <button class="btn btn-ghost" onclick="ldapSyncNow()">🔄 立即同步</button></div></div>`;
 },
 async filters(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
@@ -819,6 +849,60 @@ async function delNode(nid,name){
   if(!confirm(`确认删除节点「${name}」？\n（需无子节点且无资产挂着）`))return;
   try{await api('/nodes/'+nid,{method:'DELETE'});toast('已删除');go('nodes')}
   catch(e){toast(e.message||'删除失败')}
+}
+
+// ===== 角色管理（F1~F7）=====
+function roleDn(dn,role){return `<span data-dn="${esc(dn)}" style="display:inline-flex;align-items:center;gap:6px;background:var(--primary-light);color:var(--primary);border-radius:8px;padding:3px 10px;font-size:12px;margin:3px 4px 0 0;font-family:Consolas,monospace">${esc(dn)} <b style="cursor:pointer" onclick="this.parentElement.remove()">✕</b></span>`}
+function addRoleDn(role){
+  const inp=document.getElementById('add-'+role);
+  const dn=(inp.value||'').trim();
+  if(!dn||!dn.includes('=')){toast('DN 格式应如 cn=group,ou=groups,dc=...');return}
+  document.getElementById('map-'+role).insertAdjacentHTML('beforeend',roleDn(dn,role));
+  inp.value='';
+}
+async function pickLdapGroup(role){
+  toast('拉取 LDAP 组列表…');
+  try{
+    const r=await api('/ldap/groups');
+    const gs=(r.groups||[]);
+    if(!gs.length){toast('LDAP 无组或未配置');return}
+    openModal(`
+  <div class="modal-head"><b>选择 LDAP 组（${gs.length} 个）</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body" style="max-height:56vh;overflow:auto">
+    ${gs.map(g=>`<div class="m-row" style="display:flex;align-items:center;gap:8px;padding:7px 4px">
+      <span class="mono" style="flex:1;font-size:12px;word-break:break-all">${esc(g)}</span>
+      <button class="btn btn-sm btn-ghost" onclick="window.__pickDn='${esc(g).replace(/'/g,"")}'">选择</button></div>`).join('')}
+  </div>
+  <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">取消</button></div>`);
+    window.__pickTarget=role;
+    // 简易事件委托：点选择直接入 map
+    document.querySelectorAll('.modal-body .btn-sm').forEach((b,i)=>b.onclick=()=>{
+      document.getElementById('map-'+window.__pickTarget).insertAdjacentHTML('beforeend',roleDn(gs[i],window.__pickTarget));
+      closeModal();toast('已加入映射');
+    });
+  }catch(e){toast(e.message||'拉取失败')}
+}
+async function saveRoleSettings(){
+  const role_map={admin:[],auditor:[]};
+  ['admin','auditor'].forEach(r=>{
+    document.querySelectorAll('#map-'+r+' [data-dn]').forEach(sp=>{
+      const t=(sp.dataset.dn||'').trim();
+      if(t)role_map[r].push(t);
+    });
+  });
+  const default_role=document.getElementById('def-role')?.value||'user';
+  try{
+    await api('/role-settings',{method:'PUT',body:JSON.stringify({default_role,role_map})});
+    toast('已保存');go('roles');
+  }catch(e){toast(e.message||'保存失败')}
+}
+function roleUsers(role){
+  window.__roleFilter=role;
+  go('users');
+}
+async function ldapSyncNow(){
+  try{const r=await api('/settings/ldap/sync',{method:'POST'});toast('同步完成：'+JSON.stringify({created:r.created,updated:r.updated,suspended:r.suspended}))}
+  catch(e){toast(e.message||'同步失败')}
 }
 function pgAssetSz(tableSel,el){window['__sz_'+tableSel]=parseInt(el.value,10)||20;window['__pg_'+tableSel]=1;
   if(tableSel.includes('my-assets'))myAssetsFilter();else assetsFilter();}

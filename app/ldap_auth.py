@@ -18,8 +18,30 @@ LDAP_ATTR_DEFAULTS = {
     "login_attr": "uid", "name_attr": "cn", "mail_attr": "mail",
     "user_filter": "(objectClass=inetOrgPerson)",
     "map_admin": "", "map_auditor": "", "default_role": "user",
-    "group_maps": "[]", "enabled": 0,
+    "role_map": "", "group_maps": "[]", "enabled": 0,
 }
+
+
+def get_role_map(cfg) -> dict:
+    """角色 → DN 列表映射。兼容旧单 DN 字段（map_admin/map_auditor 合并进列表）。
+    返回 {admin:[dn...], auditor:[dn...], user:[]}"""
+    rm = {}
+    try:
+        rm = json.loads(cfg.get("role_map") or "{}")
+        if not isinstance(rm, dict):
+            rm = {}
+    except Exception:
+        rm = {}
+    out = {"admin": [], "auditor": []}
+    for k in ("admin", "auditor"):
+        lst = rm.get(k) or []
+        if isinstance(lst, str):
+            lst = [lst]
+        old_single = (cfg.get(f"map_{k}") or "").strip()
+        if old_single and old_single not in lst:
+            lst.append(old_single)
+        out[k] = [x.strip() for x in lst if x and x.strip()]
+    return out
 
 
 def get_config():
@@ -47,6 +69,9 @@ def save_config(b: dict):
     cols = {k: b.get(k, LDAP_ATTR_DEFAULTS.get(k)) for k in LDAP_ATTR_DEFAULTS if k != "bind_pw"}
     if "group_maps" in b and not isinstance(b["group_maps"], str):
         cols["group_maps"] = json.dumps(b["group_maps"], ensure_ascii=False)
+    # role_map：dict/list → JSON 字符串
+    if "role_map" in b and not isinstance(b["role_map"], str):
+        cols["role_map"] = json.dumps(b["role_map"], ensure_ascii=False)
     # 角色映射 DN 归一（strip）
     for k in ("map_admin", "map_auditor"):
         cols[k] = (cols.get(k) or "").strip()
@@ -113,11 +138,15 @@ def test_connection(cfg=None):
 
 
 def _resolve_role(cfg, member_of):
+    """多 DN 角色映射：admin > auditor > default_role（多命中取最高权限）"""
     mos = [str(x).lower() for x in (member_of or [])]
-    if cfg.get("map_admin") and cfg["map_admin"].lower() in mos:
-        return "admin"
-    if cfg.get("map_auditor") and cfg["map_auditor"].lower() in mos:
-        return "auditor"
+    rm = get_role_map(cfg)
+    for dn in rm.get("admin", []):
+        if dn.lower() in mos:
+            return "admin"
+    for dn in rm.get("auditor", []):
+        if dn.lower() in mos:
+            return "auditor"
     return cfg.get("default_role") or "user"
 
 

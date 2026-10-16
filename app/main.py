@@ -2067,6 +2067,100 @@ async def account_scan_history(p=Depends(require_role('admin', 'auditor'))):
 # ============================================================
 import ldap_auth
 
+# ===== 角色管理（F1~F7：A1+B1+C1 方案）=====
+@app.get("/api/v1/role-settings")
+async def role_settings_get(p=Depends(require_role('admin'))):
+    """默认角色 + LDAP 角色映射（聚合视图）"""
+    cfg = ldap_auth.get_config()
+    return utils.ok({
+        "default_role": cfg.get("default_role") or "user",
+        "role_map": ldap_auth.get_role_map(cfg),
+        "ldap_enabled": bool(cfg.get("enabled")),
+    })
+
+@app.put("/api/v1/role-settings")
+async def role_settings_put(request: Request, p=Depends(require_role('admin'))):
+    """保存默认角色 + 角色映射（写入 ldap_config；role_map 为 {admin:[dn],auditor:[dn]}）"""
+    b = await request.json()
+    dr = b.get("default_role")
+    if dr not in ("admin", "auditor", "user"):
+        raise HTTPException(400, "default_role 必须是 admin/auditor/user")
+    rm = b.get("role_map") or {}
+    if not isinstance(rm, dict):
+        raise HTTPException(400, "role_map 格式错误")
+    clean = {}
+    for k in ("admin", "auditor"):
+        lst = rm.get(k) or []
+        if isinstance(lst, str):
+            lst = [lst]
+        clean[k] = [str(x).strip() for x in lst if str(x).strip()][:20]
+    cfg = ldap_auth.get_config()
+    # ldap 未启用也可保存（待启用后生效）
+    if cfg.get("enabled") or True:
+        ldap_auth.save_config({**cfg, "default_role": dr,
+                               "role_map": json.dumps(clean, ensure_ascii=False)})
+    write_audit(p['username'], 'role_settings', 'system', 0,
+                {'default_role': dr, 'role_map': clean})
+    return utils.ok(message="saved")
+
+@app.get("/api/v1/role-matrix")
+async def role_matrix(p=Depends(auth)):
+    """角色权限矩阵（对齐前端 PAGE_ROLES + 后端 require_role 实际逻辑）"""
+    m = [
+        {"page": "我的资产 / SSH / RDP / 文件管理", "admin": True, "auditor": False, "user": True},
+        {"page": "资产管理 / 节点管理", "admin": True, "auditor": False, "user": False},
+        {"page": "授权管理（五维策略）", "admin": True, "auditor": False, "user": False},
+        {"page": "用户管理", "admin": True, "auditor": False, "user": False},
+        {"page": "角色管理", "admin": True, "auditor": False, "user": False},
+        {"page": "在线会话监视 / 实时观看", "admin": True, "auditor": True, "user": "own"},
+        {"page": "会话回放 / 命令审计 / 传输审计", "admin": True, "auditor": True, "user": False},
+        {"page": "系统设置（LDAP/Webhook/Syslog）", "admin": True, "auditor": False, "user": False},
+    ]
+    counts = {"admin": 0, "auditor": 0, "user": 0}
+    for row in utils.query("SELECT role, COUNT(*) c FROM users GROUP BY role"):
+        counts[row["role"]] = row["c"]
+    return utils.ok({"matrix": m, "counts": counts})
+
+@app.post("/api/v1/users/batch-role")
+async def users_batch_role(request: Request, p=Depends(require_role('admin'))):
+    """批量改角色 {ids:[...], role:'admin|auditor|user'}；不可改自己（防最后一个管理员误操作降权）"""
+    b = await request.json()
+    ids, role = b.get("ids") or [], b.get("role")
+    if role not in ("admin", "auditor", "user"):
+        raise HTTPException(400, "role 非法")
+    if not ids:
+        raise HTTPException(400, "ids 为空")
+    admins = [r["id"] for r in utils.query("SELECT id FROM users WHERE role='admin' AND is_active=1")]
+    try:
+        me_id = int(p['sub'])
+    except (TypeError, ValueError):
+        me_id = -1
+    ids = [int(i) for i in ids if str(i).isdigit()]
+    if me_id in ids and role != 'admin':
+        raise HTTPException(400, "不能修改自己的角色（防误降权锁死）")
+    remaining = [a for a in admins if a not in ids]
+    if role != 'admin' and not remaining:
+        raise HTTPException(400, "系统至少需保留一名激活的管理员")
+    for uid in ids:
+        utils.execute("UPDATE users SET role=%s WHERE id=%s", (role, uid))
+    write_audit(p['username'], 'batch_role', 'user', 0, {'ids': ids, 'role': role})
+    return utils.ok(message=f"已更新 {len(ids)} 个用户角色为 {role}")
+
+@app.get("/api/v1/ldap/groups")
+async def ldap_groups(request: Request, p=Depends(require_role('admin'))):
+    """测试连接拉取 LDAP 组 DN 列表（供角色映射选择；组过滤 objectClass=groupOfNames|posixGroup）"""
+    cfg = ldap_auth.get_config()
+    from ldap3 import SUBTREE
+    try:
+        conn = ldap_auth._conn(cfg)
+        conn.search(cfg["base_dn"], "(|(objectClass=groupOfNames)(objectClass=posixGroup))",
+                    SUBTREE, attributes=["cn"])
+        groups = [str(e.entry_dn) for e in conn.entries][:500]
+        conn.unbind()
+        return utils.ok({"groups": groups, "total": len(groups)})
+    except Exception as e:
+        raise HTTPException(502, f"LDAP 连接失败: {str(e)[:80]}")
+
 @app.get("/api/v1/settings/ldap")
 async def ldap_get(p=Depends(require_role('admin'))):
     return utils.ok(ldap_auth.get_config())
