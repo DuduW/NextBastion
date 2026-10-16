@@ -204,3 +204,35 @@ check("不存在会话", s in (200, 404))
 print(f"\n========== 总计: {R['pass']} 通过 / {R['fail']} 失败 ==========")
 json.dump(R, open("/tmp/api_test_results.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print("结果已存 /tmp/api_test_results.json")
+
+# ===== 9. SFTP 路径安全变体矩阵（渗透二轮修复固化）=====
+s, d = req("POST", "/api/v1/files/81/45/session", token=TOK)
+_mfsid = (d.get("data") or {}).get("fsid", "")
+if _mfsid:
+    import urllib.parse as _up
+    _deny_dl = ["/etc//shadow","/etc/./shadow","/etc/../etc/shadow","/ETC/SHADOW","/etc/shadow ",
+                "/etc/shadow%00","/opt//nextbastion/.secrets","/opt/nextbastion/../nextbastion/.secrets",
+                "/root/.ssh/id_rsa","/tmp/../../etc/shadow","/etc/ssh/ssh_host_rsa_key",
+                "/root/.ssh/known_hosts","/etc/passwd-","/etc/shadow-","/tmp/cert.pem",
+                "/root/.ssh/authorized_keys.bak","/home/u/id_rsa.old"]
+    for _p in _deny_dl:
+        s, _ = req("GET", f"/api/v1/files/{_mfsid}/download?path={_up.quote(_p, safe='')}", token=TOK)
+        check(f"变体拦截 dl {_p}", s == 403, f"s={s}")
+    for _p in ["/etc/shadow","/root/.ssh/id_rsa","/opt/nextbastion/.secrets"]:
+        s, _ = req("GET", f"/api/v1/files/{_mfsid}/stat?path={_up.quote(_p, safe='')}", token=TOK)
+        check(f"变体拦截 stat {_p}", s == 403, f"s={s}")
+    for _p in ["/etc/cron.d//x","/etc/cron.d/./x","/etc/cron.d/../cron.d/x","/ROOT/.SSH/x","/etc/cron.d/x%00"]:
+        s, _ = req("POST", f"/api/v1/files/{_mfsid}/upload?path={_up.quote(_p, safe='')}&offset=0&append=0&last=1", token=TOK, raw=b"x")
+        check(f"变体拦截 up {_p}", s == 403, f"s={s}")
+    for _p in ["/root/.ssh","/opt/nextbastion"]:
+        s, _ = req("GET", f"/api/v1/files/{_mfsid}/list?path={_up.quote(_p, safe='')}", token=TOK)
+        check(f"变体拦截 list {_p}", s == 403, f"s={s}")
+    # 正常功能
+    s, _ = req("GET", f"/api/v1/files/{_mfsid}/list?path=/tmp", token=TOK)
+    check("变体矩阵-正常list", s == 200, f"s={s}")
+    s, _ = req("GET", f"/api/v1/files/{_mfsid}/download?path=/etc/hosts", token=TOK)
+    check("变体矩阵-正常download", s == 200, f"s={s}")
+    s, _ = req("POST", f"/api/v1/files/{_mfsid}/upload?path=/tmp/safe_probe.txt&offset=0&append=0&last=1", token=TOK, raw=b"x")
+    check("变体矩阵-正常upload", s == 200, f"s={s}")
+    req("POST", f"/api/v1/files/{_mfsid}/op", token=TOK, body={"op": "delete", "path": "/tmp/safe_probe.txt"})
+    req("POST", f"/api/v1/files/{_mfsid}/close", token=TOK)

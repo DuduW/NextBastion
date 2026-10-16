@@ -1885,8 +1885,11 @@ async def file_list(fsid: str, path: str = "/", p=Depends(auth)):
         raise HTTPException(410, "文件会话已过期，请重新打开")
     except FileNotFoundError:
         raise HTTPException(404, "路径不存在")
-    except Exception as e:
-        raise HTTPException(500, str(e)[:100])
+    except PermissionError as e:
+        write_audit(p['username'], 'deny_list', 'file', path, {'reason': str(e)})
+        raise HTTPException(403, str(e))
+    except Exception:
+        raise HTTPException(500, "列目录失败")
 
 @app.post("/api/v1/files/{fsid}/upload")
 async def file_upload(fsid: str, request: Request, p=Depends(auth)):
@@ -1917,11 +1920,14 @@ async def file_upload(fsid: str, request: Request, p=Depends(auth)):
 
 @app.get("/api/v1/files/{fsid}/stat")
 async def file_stat(fsid: str, path: str, p=Depends(auth)):
-    """R4: 远端文件元信息（断点续传）"""
+    """R4: 远端文件元信息（断点续传）；敏感路径 403（不给存在性探测面）"""
     try:
         return utils.ok(await fileman.stat_file(fsid, path))
     except KeyError:
         raise HTTPException(410, "文件会话已过期")
+    except PermissionError as e:
+        write_audit(p['username'], 'deny_stat', 'file', path, {'reason': str(e)})
+        raise HTTPException(403, str(e))
 
 @app.get("/api/v1/files/{fsid}/download")
 async def file_download(fsid: str, path: str, p=Depends(auth)):
@@ -1958,10 +1964,13 @@ async def file_op(fsid: str, request: Request, p=Depends(auth)):
         return utils.ok(message="done")
     except KeyError:
         raise HTTPException(410, "文件会话已过期")
+    except PermissionError as e:
+        write_audit(p['username'], f'deny_{op}', 'file', str(b.get('path') or b.get('old')), {'reason': str(e)})
+        raise HTTPException(403, str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(500, str(e)[:100])
+    except Exception:
+        raise HTTPException(500, "操作失败")
 
 @app.get("/api/v1/files/transfers")
 async def file_transfers(request: Request, p=Depends(require_role('admin', 'auditor'))):

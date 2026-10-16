@@ -19,15 +19,50 @@ RISK_DIRS = ["/etc", "/root", "/opt/nextbastion"]
 TRASH = ".nb-trash"
 MAX_UPLOAD = 2 * 1024 * 1024 * 1024   # 2GB
 
-# ===== 安全层（2026-10-16 渗透测试修复）=====
-# 上传写入黑名单：可导致 RCE/持久化的目标（cron/ssh 密钥/系统服务/自守护路径）
-UPLOAD_DENY = ["/etc/cron", "/var/spool/cron", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly",
-               "/root/.ssh", "/home/", "/etc/systemd", "/usr/lib/systemd", "/etc/sudoers",
-               "/etc/ssh", "/opt/nextbastion"]
-# 下载黑名单：堡垒机自身的敏感文件（凭据/密钥/备份/历史）——任何资产上都按文件名拦截
-SENSITIVE_NAMES = [".secrets", "initial_credentials.txt", ".bash_history", ".ssh/id_", "authorized_keys",
-                   "id_rsa", "id_ed25519", ".env", "credentials", ".mysql_history", "shadow-", ]
-SENSITIVE_PATHS = ["/opt/nextbastion", "/etc/shadow", "/etc/gshadow"]
+# ===== 安全层（2026-10-16 渗透测试修复 + 二轮加固）=====
+import posixpath as _pp
+
+# 上传写入黑名单：可导致 RCE/持久化的目标（cron/ssh 密钥/系统服务/自守护路径）——按规范化后绝对路径前缀树判定
+UPLOAD_DENY = ["/etc/cron", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly",
+               "/etc/cron.monthly", "/var/spool/cron", "/root/.ssh", "/home",
+               "/etc/systemd", "/usr/lib/systemd", "/etc/sudoers", "/etc/sudoers.d",
+               "/etc/ssh", "/opt/nextbastion", "/root", "/etc/profile.d", "/etc/bash.bashrc",
+               "/etc/rc.d", "/etc/rc.local", "/etc/crontab", "/var/spool/at", "/etc/cron.deny"]
+# 下载黑名单：按规范化后绝对路径判定（堡垒机自身 + 主机侧系统敏感区）
+SENSITIVE_PATHS = ["/opt/nextbastion", "/etc/shadow", "/etc/gshadow", "/etc/shadow-", "/etc/gshadow-",
+                   "/etc/passwd-", "/etc/ssh", "/root", "/etc/sudoers", "/etc/sudoers.d",
+                   "/var/spool/cron", "/etc/crontab"]
+# 敏感文件名（basename 精确/后缀匹配）：主机私钥/凭据/凭据痕迹
+SENSITIVE_BASENAMES = {".secrets", "initial_credentials.txt", ".bash_history", ".mysql_history",
+                       "authorized_keys", "known_hosts", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+                       "id_rsa.pub", ".env", "credentials", "credentials.json", "shadow", "shadow-"}
+SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".kdbx")
+
+
+def _norm_path(path: str) -> str:
+    """规范化 + 输入净化：拒绝 .././ 多斜杠/空字节/编码残留/控制字符等混淆形态；
+    返回 posix 规范化路径。"""
+    raw = (path or "")
+    if raw != raw.strip():
+        raise PermissionError("路径包含首尾空白")
+    if any(seg in raw.split("/") for seg in ("..", ".")):
+        raise PermissionError("路径包含非法段（.. / .）")
+    if "//" in raw:
+        raise PermissionError("路径包含连续斜杠")
+    low_raw = raw.lower()
+    if "%00" in low_raw or "%2f" in low_raw or "%2e" in low_raw or "\\x" in low_raw:
+        raise PermissionError("路径包含编码残留")
+    if any(ord(c) < 32 or ord(c) == 127 for c in raw):
+        raise PermissionError("路径包含控制字符")
+    p = _pp.normpath(raw)
+    if not p.startswith("/"):
+        raise PermissionError("必须使用绝对路径")
+    return p
+
+
+def _path_hits(path_low: str, prefixes) -> bool:
+    """规范化后绝对路径的等值/前缀树判定（禁止子串匹配）"""
+    return any(path_low == d or path_low.startswith(d + "/") for d in prefixes)
 
 
 def _self_asset(asset: dict) -> bool:
@@ -36,27 +71,41 @@ def _self_asset(asset: dict) -> bool:
     return ip in ("127.0.0.1", "localhost", "::1")
 
 
-def _check_download(path: str) -> None:
-    """敏感文件下载阻断；命中 raise PermissionError"""
-    p = (path or "").strip()
+def _check_download(path: str) -> str:
+    """敏感文件下载阻断（规范化→路径前缀树→文件名/后缀）；返回规范化路径；命中 raise"""
+    p = _norm_path(path)
     low = p.lower()
-    for d in SENSITIVE_PATHS:
-        if low == d or low.startswith(d + "/"):
-            raise PermissionError(f"禁止下载堡垒机敏感路径: {d}")
-    import re as _re
-    name = p.rsplit("/", 1)[-1].lower()
-    for n in SENSITIVE_NAMES:
-        if n in name or n in low:
-            raise PermissionError(f"禁止下载敏感文件: {name}")
+    if _path_hits(low, SENSITIVE_PATHS):
+        raise PermissionError("禁止下载敏感路径下的文件")
+    base = low.rsplit("/", 1)[-1]
+    if base in SENSITIVE_BASENAMES or base.endswith(SENSITIVE_SUFFIXES):
+        raise PermissionError(f"禁止下载敏感文件: {base}")
+    # 变体对抗：路径中夹带敏感名（如 /tmp/x/id_rsa.bak）——对 basename 的已知变体做后缀检测
+    for nm in ("shadow", "authorized_keys", "known_hosts", "id_rsa", "id_ed25519", "id_ecdsa"):
+        if base.startswith(nm + ".") or base == nm or base.startswith(nm + "-"):
+            raise PermissionError(f"禁止下载敏感文件: {base}")
+    return p
 
 
-def _check_upload(path: str) -> None:
-    """高危写入阻断（cron/ssh 密钥/系统服务）；命中 raise PermissionError"""
-    p = (path or "").strip()
+def _check_upload(path: str) -> str:
+    """高危写入阻断（规范化→前缀树）；返回规范化路径"""
+    p = _norm_path(path)
     low = p.lower()
-    for d in UPLOAD_DENY:
-        if low == d or low.startswith(d + "/"):
-            raise PermissionError(f"禁止写入高危路径: {d}")
+    if _path_hits(low, UPLOAD_DENY):
+        raise PermissionError("禁止写入高危路径")
+    return p
+
+
+def _check_read_meta(path: str) -> str:
+    """list/stat/op 元数据与路径操作统一校验（防 stat 探测敏感文件存在性 / rename 逃逸）"""
+    return _check_download(path)
+
+
+def _suspicious_raw(path) -> bool:
+    """原始输入可疑标记（审计加固）：含 //、./、..、%2f 编码、尾部空格"""
+    raw = str(path or "")
+    return ("//" in raw or "/./" in raw or raw.endswith("/.") or ".." in raw
+            or "%2f" in raw.lower() or "%00" in raw.lower() or raw != raw.strip())
 
 
 def _risk(path: str) -> bool:
@@ -123,12 +172,15 @@ async def list_dir(fsid: str, path: str) -> dict:
     s = _sess(fsid)
     sf = await _sftp(s)
     path = path or "/"
-    # 相对路径（如 "."）转绝对路径——默认目录 = 账号 home
+    # 安全加固：原始输入可疑 → 审计标记（相对路径合法场景走 realpath 后再校验）
+    if _suspicious_raw(path):
+        log_transfer(s, "list", path, 0, "suspicious_path")
     try:
         if not path.startswith("/"):
             path = await sf.realpath(path)
     except Exception:
         pass
+    path = _check_read_meta(path)   # 统一校验（规范化+敏感路径）
     attrs = await sf.listdir(path)
     import stat as _st
     items = []
@@ -154,9 +206,14 @@ async def list_dir(fsid: str, path: str) -> dict:
 
 
 async def stat_file(fsid: str, path: str) -> dict:
-    """R4: 远端文件元信息（断点续传探查已传大小）"""
+    """R4: 远端文件元信息（断点续传探查已传大小）；统一安全校验（防 stat 探测敏感路径存在性）"""
     s = _sess(fsid)
     sf = await _sftp(s)
+    try:
+        path = _check_read_meta(path)
+    except PermissionError:
+        log_transfer(s, "stat", path, 0, "denied")
+        raise
     try:
         st = await sf.stat(path)
     except Exception:
@@ -170,8 +227,11 @@ async def stat_file(fsid: str, path: str) -> dict:
 
 
 async def download(fsid: str, path: str) -> dict:
-    """返回 {f, size}；高危目录同步留存副本；敏感文件阻断"""
-    _check_download(path)   # 安全修复②：堡垒机敏感文件禁下载
+    """返回 {f, size}；高危目录同步留存副本；敏感文件阻断（规范化后判定）"""
+    if _suspicious_raw(path):
+        s0 = _sess(fsid)
+        log_transfer(s0, "download", path, 0, "suspicious_path")
+    path = _check_download(path)   # 统一校验：规范化→路径树→文件名/后缀
     s = _sess(fsid)
     sf = await _sftp(s)
     f = await sf.open(path, "rb")
@@ -202,8 +262,11 @@ async def download(fsid: str, path: str) -> dict:
 
 
 async def upload_chunk(fsid: str, path: str, offset: int, data: bytes, append: bool = False) -> int:
-    """分片上传：append 模式续传。返回已写偏移；高危路径阻断"""
-    _check_upload(path)   # 安全修复①：cron/ssh密钥/系统路径禁写（RCE 防护）
+    """分片上传：append 模式续传。返回已写偏移；高危路径阻断（规范化后判定）"""
+    if _suspicious_raw(path):
+        s0 = _sess(fsid)
+        log_transfer(s0, "upload", path, 0, "suspicious_path")
+    path = _check_upload(path)   # 统一校验：规范化→前缀树
     s = _sess(fsid)
     sf = await _sftp(s)
     mode = "ab" if append else "wb"
@@ -217,14 +280,17 @@ async def upload_chunk(fsid: str, path: str, offset: int, data: bytes, append: b
 async def rename(fsid: str, old: str, new: str):
     s = _sess(fsid)
     sf = await _sftp(s)
+    _check_read_meta(old)   # 防把敏感文件改名带出
+    new = _check_upload(new)  # 新位置按写入校验
     await sf.rename(old, new)
     log_transfer(s, "rename", f"{old} -> {new}", 0, "ok")
 
 
 async def delete(fsid: str, path: str):
-    """删除进回收站（同盘 rename 到 .nb-trash，不可回收的目录递归删除也先挪）"""
+    """删除进回收站（同盘 rename 到 .nb-trash，不可回收的目录递归删除也先挪）；统一校验"""
     s = _sess(fsid)
     sf = await _sftp(s)
+    path = _check_read_meta(path)
     sf_conn = s["conn"]
     parent = os.path.dirname(path.rstrip("/")) or "/"
     trash = parent + "/" + TRASH
