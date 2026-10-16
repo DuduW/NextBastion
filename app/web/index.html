@@ -246,7 +246,7 @@ document.querySelectorAll('.nav-item[data-page]').forEach(i=>i.onclick=()=>go(i.
 function go(page){
   if(!pageAllowed(page)){toast('无权访问该页面');page='myassets'}
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active',i.dataset.page===page));
-  (PAGES[page]||PAGES.dashboard)().then(html=>{document.getElementById('main').innerHTML=html;if(page==='settings'){if(typeof ldapLoad==='function')ldapLoad();if(typeof foRefresh==='function')foRefresh();const u=document.getElementById('sysinfo-url');if(u){u.innerHTML='<span class=\'mono\'>'+esc(location.host)+'</span> · <b>'+esc(location.protocol==='https:'?'HTTPS':'HTTP')+'</b>';}}if(page==='myassets')myAssetsFilter();if(page==='assets')assetsFilter();if(page==='policies')paginateTable('#pol-table','pol');if(page==='users'){if(window.__roleFilter){const sel=document.getElementById('u-role-q');if(sel){sel.value=window.__roleFilter;}window.__roleUsersFilter&&window.__roleUsersFilter();window.__roleFilter=null;}paginateTable('#usr-table','usr');}});
+  (PAGES[page]||PAGES.dashboard)().then(html=>{document.getElementById('main').innerHTML=html;if(page==='settings'){if(typeof ldapLoad==='function')ldapLoad();if(typeof foRefresh==='function')foRefresh();const u=document.getElementById('sysinfo-url');if(u){u.innerHTML='<span class=\'mono\'>'+esc(location.host)+'</span> · <b>'+esc(location.protocol==='https:'?'HTTPS':'HTTP')+'</b>';}}if(page==='myassets')myAssetsFilter();if(page==='assets')assetsFilter();if(page==='dashboard'&&typeof loadHighRisk==='function')loadHighRisk();if(page==='policies')paginateTable('#pol-table','pol');if(page==='users'){if(window.__roleFilter){const sel=document.getElementById('u-role-q');if(sel){sel.value=window.__roleFilter;}window.__roleUsersFilter&&window.__roleUsersFilter();window.__roleFilter=null;}paginateTable('#usr-table','usr');}});
 }
 
 function foChip(v,fk){
@@ -329,6 +329,16 @@ async dashboard(){
     <div class="card stat"><div class="label">在线会话</div><div class="value">${s.online_sessions??'-'}</div></div>
     <div class="card stat"><div class="label">今日命令</div><div class="value">${s.today_commands??'-'}</div></div>
     <div class="card stat"><div class="label">今日高危</div><div class="value ${s.high_risk_alerts>0?'alert':''}">${s.high_risk_alerts??'-'}</div></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <h3 style="margin:0">🚨 高危命令明细</h3>
+      <div class="proto-chips" style="margin-left:auto">
+        <button class="chip ${window.__hrScope!=='all'?'on':''}" onclick="hrScope('today')">今日</button>
+        <button class="chip ${window.__hrScope==='all'?'on':''}" onclick="hrScope('all')">全部</button>
+      </div>
+    </div>
+    <div id="hr-list"><div class="empty" style="padding:20px">加载中…</div></div>
   </div>`;
 },
 async myassets(){
@@ -883,6 +893,35 @@ function roleUsers(role){
   window.__roleFilter=role;
   go('users');
 }
+
+// ===== 仪表盘高危明细 =====
+async function loadHighRisk(){
+  const box=document.getElementById('hr-list');
+  if(!box)return;
+  const scope=window.__hrScope||'today';
+  const page=window.__hrPage||1;
+  try{
+    const r=await api(`/dashboard/highrisk?scope=${scope}&page=${page}&page_size=20`);
+    const rows=r.rows||[];
+    if(!rows.length){box.innerHTML='<div class="empty" style="padding:20px">🎉 无高危命令记录</div>';return}
+    const tr=rows.map(c=>`<tr>
+      <td class="mono" style="white-space:nowrap;color:var(--text-3)">${esc(String(c.executed_at).slice(5,16))}</td>
+      <td><b>${esc(c.username)}</b>@${esc(c.hostname)}</td>
+      <td class="mono" style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.command_text)}">${esc(c.command_text)}</td>
+      <td style="white-space:nowrap">${c.action==='block'?badge('阻断','red'):badge('告警','orange')}</td>
+      <td style="white-space:nowrap;color:var(--text-3);font-size:12px">${esc(c.matched_rule||'-')}</td></tr>`).join('');
+    const pages=r.pages||1;
+    const btn=(p,t,cur,dis)=>`<button class="btn btn-sm ${cur?'btn-primary':'btn-ghost'}" ${dis?'disabled style="opacity:.4"':''} ${dis?'':`onclick="hrGo(${p})"`}>${t}</button>`;
+    let nums='',start=Math.max(1,page-3),end=Math.min(pages,start+6);start=Math.max(1,end-6);
+    for(let i=start;i<=end;i++)nums+=btn(i,i,i===page,false);
+    box.innerHTML=`<table><thead><tr><th>时间</th><th>用户@资产</th><th>命令</th><th>动作</th><th>命中规则</th></tr></thead><tbody>${tr}</tbody></table>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        ${pages>1?btn(page-1,'‹',false,page<=1)+nums+btn(page+1,'›',false,page>=pages):''}
+        <span style="flex:1"></span><span class="hint">共 ${r.total} 条 · 第 ${page}/${pages} 页</span></div>`;
+  }catch(e){box.innerHTML=`<div class="empty" style="padding:20px;color:#e5484d">${esc(e.message||'加载失败')}</div>`}
+}
+function hrGo(p){window.__hrPage=p;loadHighRisk()}
+function hrScope(s){window.__hrScope=s;window.__hrPage=1;loadPage()}
 async function ldapSyncNow(){
   try{const r=await api('/settings/ldap/sync',{method:'POST'});toast('同步完成：'+JSON.stringify({created:r.created,updated:r.updated,suspended:r.suspended}))}
   catch(e){toast(e.message||'同步失败')}

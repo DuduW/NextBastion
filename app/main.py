@@ -1064,6 +1064,28 @@ async def dashboard_stats(p=Depends(require_role('admin','auditor'))):
         "users": cnt("SELECT COUNT(*) c FROM users WHERE is_active=1"),
     })
 
+@app.get("/api/v1/dashboard/highrisk")
+async def dashboard_highrisk(request: Request, p=Depends(require_role('admin','auditor'))):
+    """仪表盘高危命令明细清单（block/alert，服务端分页，复用命令审计查询模式）"""
+    try:
+        page = max(1, int(request.query_params.get('page', 1) or 1))
+    except ValueError:
+        page = 1
+    try:
+        ps = min(100, max(10, int(request.query_params.get('page_size', 20) or 20)))
+    except ValueError:
+        ps = 20
+    scope = request.query_params.get('scope', 'today')
+    cond = " AND DATE(c.executed_at)=CURDATE()" if scope == 'today' else ""
+    base = (" FROM command_logs c JOIN users u ON c.user_id=u.id JOIN assets a ON c.asset_id=a.id"
+            " WHERE c.action IN ('block','alert')" + cond)
+    total = utils.query("SELECT COUNT(*) AS n" + base, one=True)['n']
+    rows = utils.query("""SELECT c.command_text, c.action, c.matched_rule, c.executed_at,
+                                 u.username, a.hostname, c.session_id""" + base +
+                       " ORDER BY c.id DESC LIMIT %s OFFSET %s", [ps, (page - 1) * ps])
+    return utils.ok({"rows": rows, "total": total, "page": page,
+                     "pages": max(1, (total + ps - 1) // ps), "page_size": ps, "scope": scope})
+
 # ============================================================
 # 6. RDP token（无状态 JWT，60s 有效，跨 worker 可验证）
 # ============================================================
