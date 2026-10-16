@@ -1213,6 +1213,12 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
         await ws.send_text('\r\n\x1b[31m[NextBastion] 资产或账号不存在\r\n\x1b[0m')
         await ws.close(code=4404)
         return
+    # 安全修复（渗透跟进）：资产=堡垒机自身 → 拒绝 SSH 会话（防授权继承链直接 root 堡垒机）
+    if (asset.get("ip") or "").strip() in ("127.0.0.1", "localhost", "::1") and user.get("role") != "admin":
+        await ws.send_text('\r\n\x1b[31m[NextBastion] 普通用户禁止连接堡垒机自身（如需运维堡垒机请使用管理员账号）\r\n\x1b[0m')
+        write_audit(user['username'], 'deny_terminal', 'asset', asset_id, {'reason': 'self-bastion ssh blocked'})
+        await ws.close(code=4403)
+        return
     pol = check_access(user, asset_id, acc['username'])
     if not pol:
         await ws.send_text(f"\r\n\x1b[31m[NextBastion] 五维授权校验未通过：用户 {user['username']} 无权以 {acc['username']} 访问 {asset['hostname']}\r\n\x1b[0m")
