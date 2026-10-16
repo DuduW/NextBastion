@@ -62,8 +62,9 @@ try:
     _bypass = __import__("os").path.exists("/opt/nextbastion/.admin_mfa_off")
     check("admin 关MFA被拒(强制MFA)", (403 if not _bypass else 200) == s,
           f"s={s} bypass={'on' if _bypass else 'off'}")
+    # 旁路开启（用户显式关闭 MFA）时保持关闭，不自动恢复；旁路关闭（正常态）恢复开启
     with _c2.cursor() as _cu2:
-        _cu2.execute("UPDATE users SET is_mfa_enabled=1 WHERE username='admin'")
+        _cu2.execute("UPDATE users SET is_mfa_enabled=%s WHERE username='admin'", (0 if _bypass else 1))
     _c2.close()
 except ImportError:
     check("admin 关MFA被拒(强制MFA)", True, "pymysql不可用跳过")
