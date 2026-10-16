@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.png
+!docs/screenshots/*.png
 *.log
 .env
 *.txt
