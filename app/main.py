@@ -2220,7 +2220,8 @@ async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
     sqlgw.SQL_SESSIONS[fsid]["session_id"] = sid
     write_audit(user['username'], 'sql_session_open', 'asset', asset_id, {'fsid': fsid[:12], 'read_only': read_only})
     return utils.ok({"fsid": fsid, "session_id": sid, "hostname": asset['hostname'],
-                     "read_only": read_only, "databases": []})
+                     "read_only": read_only, "database": asset.get("initial_db") or "",
+                     "username": acc['username']})
 
 
 def client_ip_dummy():
