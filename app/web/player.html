@@ -129,6 +129,8 @@ async function load(){
   const bp=document.getElementById('btn-play');
   bp.disabled=false;bp.onclick=toggle;
   doSeek(0);
+  // 自动播放（用户报告"无法回放"：打开停在首帧+满屏水印被误判为空白）
+  start();
 }
 load();
 </script>
