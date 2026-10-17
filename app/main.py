@@ -988,7 +988,7 @@ async def my_assets(payload=Depends(auth)):
         conds += f" OR (p.user_or_group_type='group' AND p.user_or_group_id IN ({','.join(['%s']*len(gids))}))"
         args += gids
     # 节点继承：资产直接节点或其任意祖先节点上的策略都生效（与 check_access 一致）
-    sql = f"""SELECT DISTINCT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.labels, n.name AS node_name
+    sql = f"""SELECT DISTINCT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.labels, a.device_type, n.name AS node_name
               FROM assets a
               JOIN asset_nodes n ON a.node_id=n.id
               WHERE EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
