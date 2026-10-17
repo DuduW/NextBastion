@@ -344,11 +344,12 @@ async dashboard(){
 async myassets(){
   const rows=await api('/my/assets');
   const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
+    <td>${devBadge(a.device_type)}</td>
     <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
     <td>${protoBadge(a.protocol)}</td><td>${esc(a.node_name)}</td>
     <td>${a.protocol==='rdp'
       ?`<button class="btn btn-sm btn-ghost" onclick="rdpConnect(${a.id})">RDP</button>`
-      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id})">连 接</button>`}</td></tr>`).join('');
+      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id},'${a.device_type||'linux'}')">连 接</button>`}</td></tr>`).join('');
   // 前端分页（与搜索/协议筛选联动）：当前页切片渲染
   setTimeout(()=>pagiAssetsTable('#my-assets-table','my-count','__myAssetsPg','__myAssetsSz',myAssetsFilter),0);
   return `<div class="page-head"><div><h2>我的资产</h2><div class="sub">五维授权过滤后的可见资产</div></div></div>
@@ -361,7 +362,7 @@ async myassets(){
       </div>
     </div>
     <div class="hint" id="my-count" style="margin:6px 2px 0"></div>
-  <div id="my-assets-table">${rows.length?`<table><thead><tr><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>节点</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无授权资产</div>'}</div></div>`;
+  <div id="my-assets-table">${rows.length?`<table><thead><tr><th>主机名</th><th>IP</th><th>系统</th><th>设备类型</th><th>分组</th><th>协议</th><th>节点</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无授权资产</div>'}</div></div>`;
 },
 async assets(){
   const [rows,nodes]=await Promise.all([api('/assets'),api('/nodes')]);
@@ -1011,6 +1012,8 @@ async function assetForm(id){
     ${mRow('主机名 *','<input id="m-hostname" value="'+esc(a.hostname)+'" placeholder="如 web-nginx-01">')}
     ${mRow('IP *','<input id="m-ip" value="'+esc(a.ip)+'" placeholder="172.18.x.x">')}
     ${mRow('协议','<select id="m-proto" onchange="protoSwitch()"><option value="ssh" '+(a.protocol!=='rdp'?'selected':'')+'>SSH (Linux)</option><option value="rdp" '+(a.protocol==='rdp'?'selected':'')+'>RDP (Windows)</option></select>')}
+    ${mRow('设备类型',`<select id="m-devtype" onchange="devTypeSwitch()">${[['linux','🐧 Linux 服务器'],['huawei','🌐 华为交换机/路由器'],['h3c','🌐 H3C'],['cisco','🌐 思科'],['ruijie','🌐 锐捷'],['juniper','🌐 Juniper'],['mysql','🗄️ MySQL 数据库']].map(d=>`<option value="${d[0]}" ${(a.device_type||'linux')===d[0]?'selected':''}>${d[1]}</option>`).join('')}</select><div class="hint" id="m-devtype-hint"></div>`)}
+    ${mRow('enable 密码（网络设备）',`<input id="m-enablepw" type="password" placeholder="双重认证升权密码（可选，AES 加密托管）">`)}
     ${mRow('操作系统',osSelectHtml(a.os_type))}
     ${mRow('分组','<input id="m-labels" value="'+esc((a.labels_arr||[]).join(', '))+'" list="m-labels-list" placeholder="如: 生产, 数据库（逗号分隔可多选）"><datalist id="m-labels-list">'+(window.__allLabels||[]).map(l=>'<option value="'+esc(l)+'">').join('')+'</datalist><div class="hint">用于分类与搜索，多个分组用逗号分隔</div>')}
     ${mRow('SSH 端口','<input id="m-sshport" type="number" value="'+a.ssh_port+'">')}
@@ -1039,6 +1042,14 @@ function osOtherToggle(){
   if(!sel||!other)return;
   other.style.display=sel.value==='__other__'?'':'none';
 }
+function devTypeSwitch(){
+  const v=document.getElementById('m-devtype').value;
+  const h=document.getElementById('m-devtype-hint');
+  if(!h)return;
+  h.textContent=v==='mysql'?'MySQL 资产：连接打开 Web SQL 终端（默认只读会话）':
+    ['huawei','h3c','cisco','ruijie','juniper'].includes(v)?'网络设备：连接后自动 enable 升权（如托管）+ 免分页；SFTP 自动禁用':
+    '标准 Linux SSH（含 SFTP 文件管理）';
+}
 function protoSwitch(){
   const p=document.getElementById('m-proto').value;
   document.getElementById('m-sshport').parentElement.style.display=p==='rdp'?'none':'';
@@ -1064,7 +1075,9 @@ async function saveAsset(id){
     node_id:+document.getElementById('m-node').value,
     labels:document.getElementById('m-labels')?.value||'',
     account:document.getElementById('m-account').value.trim(),
-    password:document.getElementById('m-password').value||undefined
+    password:document.getElementById('m-password').value||undefined,
+    device_type:document.getElementById('m-devtype')?.value||'linux',
+    enable_password:document.getElementById('m-enablepw')?.value||undefined
   };
   if(!body.hostname||!body.ip){toast('主机名与 IP 必填');return}
   try{
@@ -1714,16 +1727,28 @@ function ldapReset(){
   ldapToggle();
 }
 
-async function sshConnect(assetId){
+async function sshConnect(assetId, deviceType){
   const accs=await api(`/assets/${assetId}/accounts`);
   if(!accs.length){
-    // 无托管账号：弹窗让用户自输账密（临时凭据，不落库）
     tempCredConnect(assetId);
     return;
   }
   const acc=accs[0];
+  // V1.4 分流：MySQL → SQL 终端；其余（linux/网络设备）→ xterm 终端
+  if(deviceType==='mysql'){
+    const url=`/sql.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}`;
+    window.open(url,'_blank');
+    return;
+  }
   const url=`/terminal.html?token=${TOKEN}&asset=${assetId}&account=${acc.id}&user=${encodeURIComponent(USER.username)}`;
   window.open(url,'_blank');
+}
+function devBadge(dt){
+  const M={linux:['🐧 Linux','badge-gray'],windows:['🖥️ Windows','badge-blue'],
+    huawei:['🌐 华为','badge-blue'],h3c:['🌐 H3C','badge-blue'],cisco:['🌐 思科','badge-blue'],
+    ruijie:['🌐 锐捷','badge-blue'],juniper:['🌐 Juniper','badge-blue'],mysql:['🗄️ MySQL','badge-green']};
+  const m=M[dt||'linux']||M.linux;
+  return `<span class="badge ${m[1]}" style="font-size:11px">${m[0]}</span>`;
 }
 async function tempCredConnect(assetId){
   const html=`<div class="modal-head"><b>🔑 输入登录凭据</b><button class="modal-x" onclick="closeModal()">✕</button></div>

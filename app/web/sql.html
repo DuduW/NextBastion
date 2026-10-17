@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NextBastion · SQL 终端</title>
+<style>
+:root{--bg:#0b0f14;--panel:#11161d;--bd:#232b36;--text:#d4d4d4;--dim:#8a9199;--accent:#4ec9b0;--pl:#1f2b38;--warn:#ffcb6b;--err:#f48771}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font:13px/1.6 Consolas,"Noto Sans SC",monospace;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;gap:12px;align-items:center;background:var(--panel);border-bottom:1px solid var(--bd);padding:9px 16px;font-size:12px;color:var(--dim)}
+header b{color:var(--text)}
+.ro{background:#12351f;color:#5ad07f;border-radius:6px;padding:1px 8px;font-size:11px}
+.rw{background:#3a2b10;color:var(--warn);border-radius:6px;padding:1px 8px;font-size:11px}
+.rec{color:#f48771}
+#layout{flex:1;display:grid;grid-template-columns:210px 1fr;min-height:0}
+#schema{border-right:1px solid var(--bd);overflow:auto;padding:12px;font-size:12.5px}
+#schema .db{color:var(--accent);cursor:pointer;padding:2px 0;user-select:none}
+#schema .db:before{content:'▸ ';opacity:.6}
+#schema .db.open:before{content:'▾ '}
+#schema .tb{color:#9cdcfe;padding-left:18px;cursor:pointer}
+#schema .tb:hover{background:var(--pl);border-radius:4px}
+#right{display:flex;flex-direction:column;min-height:0}
+#editor{padding:14px 16px;background:var(--bg);color:#d4d4d4;min-height:120px;font-size:13px;caret-color:var(--accent)}
+#editor .ph{color:#3d454e}
+#runbar{display:flex;gap:8px;align-items:center;padding:6px 16px;border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);background:var(--panel);font-size:11.5px;color:var(--dim)}
+button{border:none;border-radius:7px;padding:5px 14px;font-size:12px;cursor:pointer;font-family:inherit}
+#run{background:var(--accent);color:#06231b;font-weight:700}
+#clr{background:transparent;color:var(--dim);border:1px solid var(--bd)}
+#result{flex:1;overflow:auto;padding:10px 16px}
+table{border-collapse:collapse;font-size:12px;width:100%}
+th{position:sticky;top:0;background:var(--panel);color:var(--dim);text-align:left;padding:6px 10px;border-bottom:1px solid var(--bd);font-weight:500}
+td{padding:5px 10px;border-bottom:1px solid #1a222c;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis}
+tr:hover td{background:var(--pl)}
+.null{color:#4a5560;font-style:italic}
+#hist{max-height:110px;overflow:auto;border-top:1px solid var(--bd);padding:8px 16px;font-size:11px;color:var(--dim);background:var(--panel)}
+#hist .blk{color:var(--err)} #hist .alr{color:var(--warn)} #hist .ok{color:#6a9955}
+.msg{padding:10px 14px;border-radius:8px;margin:6px 0;font-size:12.5px}
+.msg.err{background:#3a1518;color:var(--err);border:1px solid #5c2026}
+.msg.info{background:#12202e;color:#7fb3e0;border:1px solid #1e3448}
+.tbar{padding:8px 16px;font-size:11px;color:var(--dim);display:flex;gap:10px}
+</style>
+</head>
+<body>
+<header>
+  <b id="h-asset">…</b>
+  <span id="h-ro" class="ro">只读会话</span>
+  <span id="h-user"></span>
+  <span style="flex:1"></span>
+  <span class="rec">● SQL 流水录像中</span>
+  <span id="h-sid" style="opacity:.6"></span>
+  <button onclick="location.href='/index.html'" style="background:transparent;color:var(--dim);border:1px solid var(--bd)">返回控制台</button>
+</header>
+<div id="layout">
+  <div id="schema"><div style="color:#3d454e">库表加载中…</div></div>
+  <div id="right">
+    <div id="editor" contenteditable="true" spellcheck="false"></div>
+    <div id="runbar">
+      <button id="run" onclick="runSql()">▶ 执行 (Ctrl+Enter)</button>
+      <button id="clr" onclick="document.getElementById('editor').innerText='';document.getElementById('editor').focus()">清空</button>
+      <span>结果 ≤1000 行 · 语句超时 30s · 高危 SQL 前置拦截</span>
+      <span style="flex:1"></span>
+      <span id="stat"></span>
+    </div>
+    <div id="result"><div class="msg info">输入 SQL 后按 Ctrl+Enter 执行 · 左侧库表可点击插入名称</div></div>
+    <div id="hist"></div>
+  </div>
+</div>
+<script>
+const qs=new URLSearchParams(location.search);
+const TOKEN=qs.get('token')||sessionStorage.getItem('nb_token');
+const ASSET_ID=+qs.get('asset'),ACCOUNT_ID=+qs.get('account');
+let FSID='',RO=true,SID='';
+function api(path,opt={}){
+  return fetch('/api/v1'+path,{...opt,headers:{'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'}}).then(async r=>{
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.detail||j.message||('HTTP '+r.status));
+    return j.data??j;
+  });
+}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function boot(){
+  try{
+    const d=await api(`/sql/${ASSET_ID}/${ACCOUNT_ID}/session`,{method:'POST'});
+    FSID=d.fsid;SID=d.session_id||'';RO=d.read_only;
+    document.getElementById('h-asset').textContent=`🗄️ ${d.hostname} · MySQL`;
+    document.getElementById('h-user').textContent=`DBA: ${JSON.parse(sessionStorage.getItem('nb_user')||'{}').username||''}`;
+    if(!RO){const e=document.getElementById('h-ro');e.className='rw';e.textContent='读写会话'}
+    document.getElementById('h-sid').textContent=SID.slice(0,16);
+    loadSchema();
+  }catch(e){
+    document.getElementById('result').innerHTML=`<div class="msg err">会话建立失败：${esc(e.message)}</div>`;
+  }
+}
+async function loadSchema(){
+  try{
+    const tree=await api(`/sql/${FSID}/schema`);
+    const box=document.getElementById('schema');
+    box.innerHTML=tree.map((d,i)=>`<div class="db" onclick="toggleDb(this,${i})">${esc(d.db)} <span style="opacity:.5">(${d.tables.length})</span></div><div class="tblist" id="tl-${i}" style="display:none">${d.tables.map(t=>`<div class="tb" onclick="insert('${esc(d.db)}.${esc(t)}')">${esc(t)}</div>`).join('')||'<div style="color:#3d454e;padding-left:18px">(无表)</div>'}</div>`).join('');
+  }catch(e){document.getElementById('schema').innerHTML=`<div style="color:#f48771">${esc(e.message)}</div>`}
+}
+function toggleDb(el,i){const l=document.getElementById('tl-'+i);const open=l.style.display!=='none';l.style.display=open?'none':'';el.classList.toggle('open',!open)}
+function insert(name){const ed=document.getElementById('editor');ed.innerText+=name;ed.focus()}
+
+async function runSql(){
+  const sql=document.getElementById('editor').innerText.trim();
+  if(!sql)return;
+  const res=document.getElementById('result'),hist=document.getElementById('hist'),stat=document.getElementById('stat');
+  res.innerHTML='<div class="msg info">⏳ 执行中…</div>';
+  const t0=performance.now();
+  try{
+    const d=await api(`/sql/${FSID}/query`,{method:'POST',body:JSON.stringify({sql})});
+    stat.textContent=`${d.elapsed}s · ${d.affected} 行`;
+    if(d.cols&&d.cols.length){
+      res.innerHTML=`<table><thead><tr>${d.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>`+
+        d.rows.map(r=>`<tr>${d.cols.map(c=>{const v=r[c];return `<td>${v===null?'<span class=null>NULL</span>':esc(typeof v==='object'?JSON.stringify(v):v)}</td>`}).join('')}</tr>`).join('')+
+        `</tbody></table><div class="tbar">共返回 ${d.rows.length} 行${d.truncated?'（已截断，仅前 1000）':''} · ${d.elapsed}s${d.action==='alert'?` · <span style="color:#ffcb6b">⚠ 命中告警规则 ${esc(d.rule||'')}</span>`:''}</div>`;
+    }else{
+      res.innerHTML=`<div class="msg info">✅ 执行成功 · 影响 ${d.affected} 行 · ${d.elapsed}s${d.action==='alert'?` · <span style="color:#ffcb6b">⚠ 告警规则 ${esc(d.rule||'')}</span>`:''}</div>`;
+    }
+    hist.innerHTML=`<div class="ok">${new Date().toLocaleTimeString()} ${sql.slice(0,70)} → ${d.affected}行 ${d.elapsed}s</div>`+hist.innerHTML;
+  }catch(e){
+    res.innerHTML=`<div class="msg err">${esc(e.message)}</div>`;
+    hist.innerHTML=`<div class="${e.message.includes('⛔')?'blk':'alr'}">${new Date().toLocaleTimeString()} ${esc(sql.slice(0,60))} → ${esc(e.message.slice(0,60))}</div>`+hist.innerHTML;
+  }
+}
+document.getElementById('editor').addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();runSql()}
+});
+window.addEventListener('beforeunload',()=>{if(FSID)navigator.sendBeacon('/api/v1/sql/'+FSID+'/close')});
+boot();
+</script>
+</body>
+</html>

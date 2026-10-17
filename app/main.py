@@ -587,7 +587,7 @@ async def manage_field_options(request: Request, p=Depends(require_role('admin')
 async def list_assets(request: Request, p=Depends(auth)):
     q = request.query_params.get('q', '').strip()
     node = request.query_params.get('node', '')
-    sql = """SELECT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.ssh_port, a.rdp_port,
+    sql = """SELECT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.ssh_port, a.rdp_port, a.device_type,
              a.status, a.node_id, n.name AS node_name,
              (SELECT acc.username FROM asset_accounts acc WHERE acc.asset_id=a.id AND acc.status='active' LIMIT 1) AS account,
              (SELECT COUNT(*) FROM asset_accounts acc2 WHERE acc2.asset_id=a.id AND acc2.status='active') AS account_count,
@@ -621,13 +621,18 @@ async def create_asset(request: Request, p=Depends(require_role('admin'))):
     b = await request.json()
     import json as _json
     labels = _json.dumps([_sanitize_text(s, 40) for s in (b.get('labels') or '').split(',') if s.strip()], ensure_ascii=False)
+    _dt = b.get('device_type') or 'linux'
+    if _dt not in netdev_mod.DEVICE_TYPES:
+        _dt = 'linux'
     aid = utils.execute(
-        "INSERT INTO assets (node_id, hostname, ip, os_type, ssh_port, rdp_port, protocol, labels) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+        "INSERT INTO assets (node_id, hostname, ip, os_type, ssh_port, rdp_port, protocol, labels, device_type, initial_db) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (b.get('node_id', 1), _sanitize_text(b['hostname'], 128), b['ip'], _sanitize_text(b.get('os_type', 'Linux'), 40),
-         b.get('ssh_port', 22), b.get('rdp_port', 3389), b.get('protocol', 'ssh'), labels))
+         b.get('ssh_port', 22), b.get('rdp_port', 3389), b.get('protocol', 'ssh'), labels, _dt,
+         _sanitize_text(b.get('initial_db'), 64) if _dt == 'mysql' else None))
     if b.get('password'):
-        utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted) VALUES (%s,%s,'password',%s)",
-                      (aid, b.get('account', 'root'), utils.encrypt_secret(b['password'])))
+        utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted, enable_secret_enc) VALUES (%s,%s,'password',%s,%s)",
+                      (aid, b.get('account', 'root'), utils.encrypt_secret(b['password']),
+                       utils.encrypt_secret(b['enable_password']) if b.get('enable_password') else None))
     write_audit(p['username'], 'create_asset', 'asset', aid, {'hostname': b['hostname'], 'ip': b['ip']})
     return utils.ok({"id": aid})
 
@@ -1399,6 +1404,13 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
         await ws.close()
         return
 
+    # ---- V1.4 网络设备连接序提示（N2/N3 实际注入在 process 建立后）----
+    dev_type = asset.get("device_type") or "linux"
+    if netdev_mod.is_netdev(dev_type):
+        await ws.send_text(f"\r\n\x1b[36m[NextBastion] 网络设备 ({dev_type}) · "
+                           f"enable {'✓ 已托管自动补输' if acc.get('enable_secret_enc') else '未托管（如需升权请手动输入）'} · "
+                           f"免分页 {'✓ 自动下发' if netdev_mod.pager_cmd(dev_type) else '—'}\x1b[0m\r\n")
+
     await ws.send_text(f"\r\n\x1b[32m[NextBastion] 会话已建立: {user['username']} → {asset['hostname']} ({acc['username']}) · 会话ID {sid} · 全程录像中\r\n\x1b[0m\r\n")
 
     async def reader(stream):
@@ -1489,6 +1501,27 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
         process = await conn.create_process(term_type='xterm-256color', term_size=(30, 100))
         process_ref[0] = process
         stdin_w = process.stdin
+
+        # ---- V1.4 网络设备：enable 升权 + 免分页自动注入（等横幅后写入 stdin，录入录像）----
+        if netdev_mod.is_netdev(dev_type):
+            async def _netdev_boot():
+                await asyncio.sleep(1.2)                       # 等待登录横幅/提示符
+                enb = netdev_mod.enable_conf(dev_type)
+                if enb and acc.get("enable_secret_enc"):
+                    try:
+                        epw = utils.decrypt_secret(acc["enable_secret_enc"])
+                        stdin_w.write(enb["cmd"])
+                        await asyncio.sleep(0.8)
+                        stdin_w.write(epw + "\n")              # enable 密码提示自动应答
+                        await asyncio.sleep(0.5)
+                    except Exception:
+                        pass
+                pg = netdev_mod.pager_cmd(dev_type)
+                if pg:
+                    stdin_w.write(pg + "\n")                   # 免分页
+                    await asyncio.sleep(0.5)
+            asyncio.create_task(_netdev_boot())
+
         reader_task = asyncio.create_task(reader(process.stdout))
         pump_task = asyncio.create_task(pump_ws_to_ssh(stdin_w))
 
@@ -2132,6 +2165,112 @@ async def account_scan_history(p=Depends(require_role('admin', 'auditor'))):
 # 13. LDAP 目录认证（M1）
 # ============================================================
 import ldap_auth
+
+# ============================================================
+# 14. MySQL 远程接入（Web SQL 终端 · V1.4）
+# ============================================================
+import sqlgw
+import netdev as netdev_mod
+
+
+def _sql_read_only(user, asset_id, account_username):
+    """MySQL 会话只读判定：任一命中策略显式勾选 allow_sql_write 才可写（能力并集语义）"""
+    for pol in check_access_all(user, asset_id, account_username):
+        if pol.get("allow_sql_write"):
+            return False
+    return True
+
+
+@app.post("/api/v1/sql/{asset_id}/{account_id}/session")
+async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
+    """建立 SQL 会话：校验授权（能力需含 sql）→ 只读判定 → 连接"""
+    user = utils.query("SELECT * FROM users WHERE id=%s", (p['sub'],), one=True)
+    asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
+    acc = utils.query("SELECT * FROM asset_accounts WHERE id=%s AND asset_id=%s", (account_id, asset_id), one=True)
+    if not (user and asset and acc):
+        raise HTTPException(404, "资产或账号不存在")
+    if netdev_mod.dev_kind(asset.get("device_type")) != "sql":
+        raise HTTPException(400, "该资产不是 MySQL 类型")
+    pol = check_access(user, asset_id, acc['username'])
+    if not pol:
+        raise HTTPException(403, "无授权")
+    cfg = merged_session_config(user, asset_id, acc['username'])
+    if cfg.get("sql") is not True:
+        raise HTTPException(403, "策略未开启数据库访问能力")
+    read_only = _sql_read_only(user, asset_id, acc['username'])
+    try:
+        fsid = await asyncio.to_thread(
+            sqlgw.open_sql_session, user, asset, acc, read_only)
+    except PermissionError:
+        raise HTTPException(403, "数据库凭据或连接失败")
+    except Exception as e:
+        raise HTTPException(502, f"MySQL 连接失败: {str(e)[:100]}")
+    # 加载 MySQL 高危规则集（语句级拦截用）
+    rf = utils.query("SELECT rules FROM command_filters WHERE name='MySQL 高危'", one=True)
+    try:
+        sqlgw.SQL_SESSIONS[fsid]["rules"] = json.loads(rf["rules"]) if rf and rf.get("rules") else []
+    except Exception:
+        sqlgw.SQL_SESSIONS[fsid]["rules"] = []
+    # 审计会话（复用 sessions 表，protocol='sql'）
+    sid = utils.new_session_id()
+    utils.execute(
+        "INSERT INTO sessions (id, user_id, asset_id, account_name, protocol, status, started_at, client_ip) "
+        "VALUES (%s,%s,%s,%s,'sql','active',NOW(),%s)",
+        (sid, user['id'], asset_id, acc['username'], client_ip_dummy()))
+    sqlgw.SQL_SESSIONS[fsid]["session_id"] = sid
+    write_audit(user['username'], 'sql_session_open', 'asset', asset_id, {'fsid': fsid[:12], 'read_only': read_only})
+    return utils.ok({"fsid": fsid, "session_id": sid, "hostname": asset['hostname'],
+                     "read_only": read_only, "databases": []})
+
+
+def client_ip_dummy():
+    return "web"
+
+
+@app.post("/api/v1/sql/{fsid}/query")
+async def sql_query(fsid: str, request: Request, p=Depends(auth)):
+    b = await request.json()
+    sql_text = b.get("sql") or ""
+    _s = sqlgw.SQL_SESSIONS.get(fsid) or {}
+    _rules = _s.get("rules") or []
+    _match = (lambda cmd: match_filter(cmd, _rules)) if _rules else match_filter
+    try:
+        out = await asyncio.to_thread(sqlgw.run_query, fsid, sql_text, _match)
+    except PermissionError as e:
+        # 阻断/只读拦截 → 告警（block 语义）
+        if "高危" in str(e):
+            s = sqlgw.SQL_SESSIONS.get(fsid) or {}
+            if s.get("session_id"):
+                utils.execute("UPDATE sessions SET is_high_risk=1 WHERE id=%s", (s["session_id"],))
+                asyncio.create_task(notify_alert(sql_text[:100], "mysql-highrisk",
+                                                 (s.get("user") or {}).get("username", "?"),
+                                                 (s.get("asset") or {}).get("hostname", "?")))
+        raise HTTPException(403, str(e))
+    except KeyError:
+        raise HTTPException(410, "SQL 会话已过期，请重新连接")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)[:200])
+    return utils.ok(out)
+
+
+@app.get("/api/v1/sql/{fsid}/schema")
+async def sql_schema(fsid: str, p=Depends(auth)):
+    try:
+        tree = await asyncio.to_thread(sqlgw.schema_tree, fsid)
+        return utils.ok(tree)
+    except KeyError:
+        raise HTTPException(410, "SQL 会话已过期")
+    except Exception as e:
+        raise HTTPException(500, f"元数据读取失败: {str(e)[:100]}")
+
+
+@app.post("/api/v1/sql/{fsid}/close")
+async def sql_close(fsid: str, p=Depends(auth)):
+    s = sqlgw.SQL_SESSIONS.get(fsid)
+    if s and s.get("session_id"):
+        utils.execute("UPDATE sessions SET status='closed', ended_at=NOW() WHERE id=%s", (s["session_id"],))
+    sqlgw.close_sql_session(fsid)
+    return utils.ok(message="closed")
 
 # ===== 角色管理（F1~F7：A1+B1+C1 方案）=====
 @app.get("/api/v1/role-settings")
