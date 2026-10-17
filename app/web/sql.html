@@ -91,7 +91,7 @@ async function boot(){
     FSID=d.fsid;SID=d.session_id||'';RO=d.read_only;window.__curDb=(d.database||'nextbastion');
     document.getElementById('h-asset').textContent=`🗄️ ${d.hostname} · MySQL`;
     document.getElementById('h-user').textContent=`DBA: ${d.username||JSON.parse(sessionStorage.getItem('nb_user')||'{}').username||''}`;
-    if(!RO){const e=document.getElementById('h-ro');e.className='rw';e.textContent='读写会话'}
+    if(!RO){const e=document.getElementById('h-ro');e.className='rw';e.textContent=(d.rw_level_desc||'读写会话').replace('（',' · ').replace('）','')}
     document.getElementById('h-sid').textContent=SID.slice(0,16);
     loadSchema();
   }catch(e){

@@ -19,6 +19,40 @@ SQL_SESSIONS = {}          # fsid → session dict
 SQL_TIMEOUT = 30           # 语句执行超时（秒）
 SQL_MAX_ROWS = 1000        # 结果截断行数
 WRITE_RE = re.compile(r"^\s*(insert|update|delete|replace|create|drop|alter|truncate|rename|grant|revoke|lock|call|load)\b", re.I)
+
+# ---- SQL 增删改查四级权限（V1.6）----
+# L1=只读(SELECT/SHOW/DESC/EXPLAIN/USE) L2=+INSERT L3=+UPDATE/REPLACE L4=+DELETE/DDL/GRANT（高危规则集另叠加）
+SQL_RW_LEVELS = {
+    1: "只读（SELECT/SHOW/DESC）",
+    2: "读 + 增（INSERT）",
+    3: "读 + 增 + 改（UPDATE）",
+    4: "读 + 增 + 改 + 删/DDL（DELETE/DDL/GRANT）",
+}
+_OP_LEVEL = {   # 动词 → 所需最低级别
+    "select": 1, "show": 1, "describe": 1, "desc": 1, "explain": 1, "use": 1,
+    "with": 1, "analyze": 1, "checksum": 1, "table": 1, "values": 1,
+    "insert": 2,
+    "update": 3, "replace": 3,
+    "delete": 4, "create": 4, "drop": 4, "alter": 4, "truncate": 4,
+    "rename": 4, "grant": 4, "revoke": 4, "lock": 4, "call": 4, "load": 4, "set": 4,
+}
+
+
+def required_level(sql_text: str) -> int:
+    """语句所需最低权限级别（CTE WITH 前缀跳过取主语句动词）"""
+    t = (sql_text or "").lstrip("( \n\t;").lower()
+    for _ in range(3):   # 跳过 WITH ... 前缀的粘动词（简化：逐词扫首个命中动词）
+        m = re.match(r"(\w+)", t)
+        if not m:
+            return 1
+        op = m.group(1)
+        if op == "with":
+            t = re.sub(r"^with\s+.*?\b(select|insert|update|delete)\b", r"\1", t, count=1, flags=re.S | re.I)
+            continue
+        return _OP_LEVEL.get(op, 4)   # 未知动词按最高级（保守）
+    return _OP_LEVEL.get(re.match(r"(\w+)", t).group(1), 4)
+
+
 SELECT_ONLY_HINT = "⛔ 只读会话：当前授权未包含「SQL 写入」，写语句已被前置拦截（未到达数据库）"
 
 # ---- SQL 流水录像（asciicast v2，复用 SSH 的监视/回放通道）----
@@ -126,19 +160,22 @@ def close_sql_session(fsid: str):
 
 
 def check_write(sql_text: str, read_only: bool, fsid: str):
-    """只读会话写语句前置拦截（到达 DB 前）"""
-    if read_only and WRITE_RE.match(sql_text):
-        s = _sess(fsid)
+    """权限级别前置拦截（到达 DB 前）——V1.6 四级增删改查"""
+    s = _sess(fsid)
+    level = s.get("rw_level") or (1 if read_only else 4)
+    need = required_level(sql_text)
+    if need > level:
         if s.get("session_id"):
             try:
                 utils.execute(
                     "INSERT INTO command_logs (session_id,user_id,asset_id,command_text,matched_rule,action,risk_level) "
                     "VALUES (%s,%s,%s,%s,%s,'block','high')",
                     (s["session_id"], s["user"]["id"], s["asset"]["id"],
-                     sql_text[:500], "readonly-session"))
+                     sql_text[:500], f"sql-level-{level}"))
             except Exception:
                 pass
-        raise PermissionError(SELECT_ONLY_HINT)
+        hint = f"⛔ SQL 权限不足：当前会话级别 L{level}（{SQL_RW_LEVELS.get(level,'')}），该语句需要 L{need}（{SQL_RW_LEVELS.get(need,'')}）· 已前置拦截（未到达数据库）"
+        raise PermissionError(hint)
 
 
 def run_query(fsid: str, sql_text: str, match_fn=None):

@@ -2220,12 +2220,21 @@ import sqlgw
 import netdev as netdev_mod
 
 
-def _sql_read_only(user, asset_id, account_username):
-    """MySQL 会话只读判定：任一命中策略显式勾选 allow_sql_write 才可写（能力并集语义）"""
+def _sql_rw_level(user, asset_id, account_username) -> int:
+    """V1.6 MySQL 增删改查四级权限：命中策略取最大级别（能力并集语义）
+    级别来源：rdp_session_config.sql_rw_level（1-4）；兼容老 allow_sql_write=1 → L4"""
+    lvl = 1
     for pol in check_access_all(user, asset_id, account_username):
+        try:
+            cfg = json.loads(pol.get("rdp_session_config") or "{}") or {}
+        except Exception:
+            cfg = {}
+        v = cfg.get("sql_rw_level")
+        if isinstance(v, (int, str)) and str(v).isdigit():
+            lvl = max(lvl, min(4, int(v)))
         if pol.get("allow_sql_write"):
-            return False
-    return True
+            lvl = 4
+    return lvl
 
 
 @app.post("/api/v1/sql/{asset_id}/{account_id}/session")
@@ -2244,11 +2253,13 @@ async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
     cfg = merged_session_config(user, asset_id, acc['username'])
     if cfg.get("sql") is not True:
         raise HTTPException(403, "策略未开启数据库访问能力")
-    read_only = _sql_read_only(user, asset_id, acc['username'])
+    rw_level = _sql_rw_level(user, asset_id, acc['username'])
+    read_only = rw_level <= 1
     cast_dir = utils.record_subdir(RECORD_DIR, user['username'])
     try:
         fsid = await asyncio.to_thread(
             sqlgw.open_sql_session, user, asset, acc, read_only, cast_dir)
+        sqlgw.SQL_SESSIONS[fsid]["rw_level"] = rw_level
     except PermissionError:
         raise HTTPException(403, "数据库凭据或连接失败")
     except Exception as e:
@@ -2269,7 +2280,9 @@ async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
     sqlgw.SQL_SESSIONS[fsid]["session_id"] = sid
     write_audit(user['username'], 'sql_session_open', 'asset', asset_id, {'fsid': fsid[:12], 'read_only': read_only})
     return utils.ok({"fsid": fsid, "session_id": sid, "hostname": asset['hostname'],
-                     "read_only": read_only, "database": asset.get("initial_db") or "",
+                     "read_only": read_only, "rw_level": rw_level,
+                     "rw_level_desc": sqlgw.SQL_RW_LEVELS.get(rw_level, ""),
+                     "database": asset.get("initial_db") or "",
                      "username": acc['username']})
 
 
