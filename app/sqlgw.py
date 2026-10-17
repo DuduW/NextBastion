@@ -21,8 +21,73 @@ SQL_MAX_ROWS = 1000        # 结果截断行数
 WRITE_RE = re.compile(r"^\s*(insert|update|delete|replace|create|drop|alter|truncate|rename|grant|revoke|lock|call|load)\b", re.I)
 SELECT_ONLY_HINT = "⛔ 只读会话：当前授权未包含「SQL 写入」，写语句已被前置拦截（未到达数据库）"
 
+# ---- SQL 流水录像（asciicast v2，复用 SSH 的监视/回放通道）----
+CAST_HEADER = {"version": 2, "width": 160, "height": 50,
+               "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}}
 
-def open_sql_session(user: dict, asset: dict, account: dict, read_only: bool) -> str:
+
+def _cast_open(s: dict, fsid: str, cast_dir: str):
+    """为 SQL 会话创建 cast 文件（语句+结果渲染成终端帧）"""
+    import os, json as _json
+    os.makedirs(cast_dir, exist_ok=True)
+    path = os.path.join(cast_dir, f"{fsid}.cast")
+    f = open(path, "w", encoding="utf-8")
+    hdr = dict(CAST_HEADER); hdr["timestamp"] = int(time.time())
+    f.write(_json.dumps(hdr) + "\n"); f.flush()
+    s["cast_f"] = f
+    s["cast_t0"] = time.time()
+    s["cast_path"] = path
+    _cast_write(s, f"\x1b[32m[NextBastion SQL 会话] {s['user'].get('username','?')} → "
+                   f"{s['asset'].get('hostname','?')} · 账号 {s['account'].get('username','?')} · "
+                   f"{'只读' if s['read_only'] else '读写'} · 全程 SQL 流水录像\x1b[0m\r\n")
+
+
+def _cast_write(s: dict, text: str):
+    """追加一帧输出（终端转义文本）"""
+    import json as _json
+    f = s.get("cast_f")
+    if not f:
+        return
+    try:
+        f.write(_json.dumps([round(time.time() - s["cast_t0"], 3), "o", text]) + "\n")
+        f.flush()
+    except Exception:
+        pass
+
+
+def _cast_close(s: dict):
+    f = s.pop("cast_f", None)
+    if f:
+        try:
+            f.close()
+        except Exception:
+            pass
+
+
+def render_sql_frame(sql_text: str, result: dict = None, error: str = None) -> str:
+    """SQL 语句+执行结果 → 终端帧文本（ANSI 着色）"""
+    lines = [f"\x1b[1;36mmysql>\x1b[0m {sql_text[:400]}"]
+    if error:
+        lines.append(f"\x1b[31m{error[:300]}\x1b[0m")
+    elif result:
+        cols = result.get("cols") or []
+        rows = result.get("rows") or []
+        if cols:
+            lines.append(" | ".join(str(c) for c in cols))
+            lines.append("-" * min(120, len(" | ".join(str(c) for c in cols))))
+            for r in rows[:50]:
+                lines.append(" | ".join(str(r.get(c, ""))[:60] for c in cols))
+            if len(rows) > 50:
+                lines.append(f"... 共 {len(rows)} 行（录像展示前 50）")
+        else:
+            lines.append(f"\x1b[33mQuery OK, {result.get('affected', 0)} rows affected "
+                         f"({result.get('elapsed', 0)}s){' · ⚠ 告警: ' + result['rule'] if result.get('action') == 'alert' else ''}\x1b[0m")
+    lines.append("")
+    return "\r\n".join(lines)
+
+
+def open_sql_session(user: dict, asset: dict, account: dict, read_only: bool,
+                     cast_dir: str = None) -> str:
     secret = utils.decrypt_secret(account["secret_encrypted"])
     conn = pymysql.connect(
         host=asset["ip"], port=asset.get("sql_port") or asset.get("ssh_port") or 3306,
@@ -37,6 +102,8 @@ def open_sql_session(user: dict, asset: dict, account: dict, read_only: bool) ->
     SQL_SESSIONS[fsid] = {"conn": conn, "user": user, "asset": asset,
                           "account": account, "read_only": read_only,
                           "ts": time.time(), "session_id": None}
+    if cast_dir:
+        _cast_open(SQL_SESSIONS[fsid], fsid, cast_dir)
     return fsid
 
 
@@ -50,6 +117,8 @@ def _sess(fsid: str) -> dict:
 def close_sql_session(fsid: str):
     s = SQL_SESSIONS.pop(fsid, None)
     if s:
+        _cast_write(s, "\r\n\x1b[32m[NextBastion] SQL 会话已结束\x1b[0m\r\n")
+        _cast_close(s)
         try:
             s["conn"].close()
         except Exception:
@@ -80,12 +149,17 @@ def run_query(fsid: str, sql_text: str, match_fn=None):
     if not sql_text:
         return {"cols": [], "rows": [], "affected": 0, "elapsed": 0, "truncated": False}
     t0 = time.time()
-    # 1) 只读写语句拦截
-    check_write(sql_text, s["read_only"], fsid)
+    # 1) 只读写语句拦截（写录像帧后抛出）
+    try:
+        check_write(sql_text, s["read_only"], fsid)
+    except PermissionError as e:
+        _cast_write(s, render_sql_frame(sql_text, error=str(e)))
+        raise
     # 2) 高危规则拦截（MySQL 高危规则集）
     action, rule = (match_fn(sql_text) if match_fn else ("allow", None))
     if action == "block":
         _audit(s, sql_text, rule, "block", 0, time.time() - t0)
+        _cast_write(s, render_sql_frame(sql_text, error=f"⛔ 高危 SQL 已阻断（规则: {rule}）"))
         raise PermissionError(f"⛔ 高危 SQL 已阻断（规则: {rule}）· 已告警管理员")
     # 3) 执行
     try:
@@ -110,9 +184,11 @@ def run_query(fsid: str, sql_text: str, match_fn=None):
         raise
     except Exception as e:
         _audit(s, sql_text, None, "error", 0, time.time() - t0, err=str(e)[:120])
+        _cast_write(s, render_sql_frame(sql_text, error=f"ERROR: {str(e)[:150]}"))
         raise RuntimeError(f"MySQL: {str(e)[:200]}")
     _audit(s, sql_text, rule if action in ("block", "alert") else None, action,
            out.get("affected", 0), out["elapsed"])
+    _cast_write(s, render_sql_frame(sql_text, result=out))
     return out
 
 

@@ -54,7 +54,7 @@ tr:hover td{background:var(--pl)}
   <span style="flex:1"></span>
   <span class="rec">● SQL 流水录像中</span>
   <span id="h-sid" style="opacity:.6"></span>
-  <button onclick="location.href='/index.html'" style="background:transparent;color:var(--dim);border:1px solid var(--bd)">返回控制台</button>
+  <button onclick="exitConsole()" style="background:transparent;color:var(--dim);border:1px solid var(--bd)">退出会话</button>
 </header>
 <div id="layout">
   <div id="schema"><div style="color:#3d454e">库表加载中…</div></div>
@@ -141,7 +141,18 @@ function exportCsv(){
 document.getElementById('editor').addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();runSql()}
 });
-window.addEventListener('beforeunload',()=>{if(FSID)navigator.sendBeacon('/api/v1/sql/'+FSID+'/close')});
+function exitConsole(){
+  if(!FSID){location.href='/';return}
+  fetch('/api/v1/sql/'+FSID+'/close',{method:'POST',headers:{'Authorization':'Bearer '+TOKEN}})
+    .catch(()=>{}).finally(()=>location.href='/');
+}
+function closeSession(){
+  if(!FSID)return;
+  try{fetch('/api/v1/sql/'+FSID+'/close',{method:'POST',keepalive:true,headers:{'Authorization':'Bearer '+(TOKEN||'')}})}catch(e){}
+  FSID='';
+}
+window.addEventListener('beforeunload',closeSession);
+window.addEventListener('pagehide',closeSession);
 boot();
 </script>
 </body>

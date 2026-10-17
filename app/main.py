@@ -2240,9 +2240,10 @@ async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
     if cfg.get("sql") is not True:
         raise HTTPException(403, "策略未开启数据库访问能力")
     read_only = _sql_read_only(user, asset_id, acc['username'])
+    cast_dir = utils.record_subdir(RECORD_DIR, user['username'])
     try:
         fsid = await asyncio.to_thread(
-            sqlgw.open_sql_session, user, asset, acc, read_only)
+            sqlgw.open_sql_session, user, asset, acc, read_only, cast_dir)
     except PermissionError:
         raise HTTPException(403, "数据库凭据或连接失败")
     except Exception as e:
@@ -2253,12 +2254,13 @@ async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
         sqlgw.SQL_SESSIONS[fsid]["rules"] = json.loads(rf["rules"]) if rf and rf.get("rules") else []
     except Exception:
         sqlgw.SQL_SESSIONS[fsid]["rules"] = []
-    # 审计会话（复用 sessions 表，protocol='sql'）
+    # 审计会话（复用 sessions 表，protocol='sql'，带 cast 录像路径 → 在线监视/回放可用）
     sid = utils.new_session_id()
     utils.execute(
-        "INSERT INTO sessions (id, user_id, asset_id, account_name, protocol, status, started_at, client_ip) "
-        "VALUES (%s,%s,%s,%s,'sql','active',NOW(),%s)",
-        (sid, user['id'], asset_id, acc['username'], client_ip_dummy()))
+        "INSERT INTO sessions (id, user_id, asset_id, account_name, protocol, status, started_at, client_ip, cast_file_path) "
+        "VALUES (%s,%s,%s,%s,'sql','active',NOW(),%s,%s)",
+        (sid, user['id'], asset_id, acc['username'], client_ip_dummy(),
+         sqlgw.SQL_SESSIONS[fsid].get("cast_path")))
     sqlgw.SQL_SESSIONS[fsid]["session_id"] = sid
     write_audit(user['username'], 'sql_session_open', 'asset', asset_id, {'fsid': fsid[:12], 'read_only': read_only})
     return utils.ok({"fsid": fsid, "session_id": sid, "hostname": asset['hostname'],
@@ -2277,6 +2279,8 @@ async def sql_query(fsid: str, request: Request, p=Depends(auth)):
     _s = sqlgw.SQL_SESSIONS.get(fsid) or {}
     _rules = _s.get("rules") or []
     _match = (lambda cmd: match_filter(cmd, _rules)) if _rules else match_filter
+    if _s:
+        _s["ts"] = time.time()
     try:
         out = await asyncio.to_thread(sqlgw.run_query, fsid, sql_text, _match)
     except PermissionError as e:
@@ -2314,6 +2318,36 @@ async def sql_close(fsid: str, p=Depends(auth)):
         utils.execute("UPDATE sessions SET status='closed', ended_at=NOW() WHERE id=%s", (s["session_id"],))
     sqlgw.close_sql_session(fsid)
     return utils.ok(message="closed")
+
+
+# ---- SQL 会话空闲回收（防关标签页漏网：30 分钟无活动自动结束 + 会话表收尾）----
+SQL_IDLE_TIMEOUT = 1800
+
+def _sql_sessions_reaper():
+    import threading
+    def loop():
+        import time as _t
+        while True:
+            _t.sleep(60)
+            now = _t.time()
+            try:
+                stale = [fsid for fsid, s in sqlgw.SQL_SESSIONS.items()
+                         if now - s.get("ts", now) > SQL_IDLE_TIMEOUT]
+                for fsid in stale:
+                    s = sqlgw.SQL_SESSIONS.get(fsid) or {}
+                    if s.get("session_id"):
+                        try:
+                            utils.execute("UPDATE sessions SET status='closed', ended_at=NOW(), "
+                                          "duration_s=TIMESTAMPDIFF(SECOND,started_at,NOW()) WHERE id=%s AND status='active'",
+                                          (s["session_id"],))
+                        except Exception:
+                            pass
+                    sqlgw.close_sql_session(fsid)
+            except Exception:
+                pass
+    threading.Thread(target=loop, daemon=True, name="sql-reaper").start()
+
+_sql_sessions_reaper()
 
 # ===== 角色管理（F1~F7：A1+B1+C1 方案）=====
 @app.get("/api/v1/role-settings")

@@ -191,7 +191,7 @@ async function api(path, opts={}){
   return j.data;
 }
 const badge=(t,c)=>`<span class="badge badge-${c}">${t}</span>`;
-const protoBadge=p=>p==='rdp'?badge('RDP','blue'):badge('SSH','green');
+const protoBadge=p=>p==='rdp'?badge('RDP','blue'):p==='sql'?badge('SQL','purple'):badge('SSH','green');
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 const fmtSize=n=>{if(n==null)return '-';if(n<1024)return n+'B';const u=['KB','MB','GB'];let i=-1;do{n/=1024;i++}while(n>=1024&&i<2);return n.toFixed(1)+u[i]};
 
@@ -676,7 +676,7 @@ async active(){
   const tr=rows.map(s=>`<tr><td class="mono">${esc(s.id)}</td><td><b>${esc(s.username)}</b></td><td>${esc(s.hostname)}</td>
     <td>${protoBadge(s.protocol)}</td><td class="mono">${esc(s.client_ip)}</td><td>${esc(s.started_at)}</td>
     <td style="white-space:nowrap">
-      ${s.protocol==='ssh'?`<button class="btn btn-sm btn-ghost" onclick="watchSession('${s.id}')">👀 监视</button>`:''}
+      ${(s.protocol==='ssh'||s.protocol==='sql')?`<button class="btn btn-sm btn-ghost" onclick="watchSession('${s.id}')">👀 监视</button>`:''}
       <button class="btn btn-sm btn-danger" onclick="killSess('${s.id}')">断开</button></td></tr>`).join('');
   return `<div class="page-head"><div><h2>在线会话</h2><div class="sub">实时会话 · SSH 可实时监视画面</div></div><span class="rec-dot">LIVE</span>
     <button class="btn btn-ghost" onclick="loadPage()">刷新</button></div>
