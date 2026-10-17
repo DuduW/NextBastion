@@ -371,7 +371,7 @@ async assets(){
     <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
     <td>${protoBadge(a.protocol)}</td><td class="mono">${a.protocol}:${a.protocol==='rdp'?a.rdp_port:a.ssh_port}</td>
     <td>${a.account?`<span class="mono">${esc(a.account)}</span>${a.account_count>1?` <span class="badge badge-gray">+${a.account_count-1}</span>`:''}${badge('已托管','green')}`:badge('未托管','red')}</td>
-    <td>${esc(a.node_name)}</td>
+    <td>${esc(a.node_name)}${a.extra_node_count?`<span class="badge badge-blue" style="margin-left:4px;font-size:10.5px">+${a.extra_node_count}</span>`:''}</td>
     <td class="st-cell" id="st-${a.id}">${a.status==='online'?badge('在线','green'):a.status==='offline'?badge('离线','red'):badge('未知','gray')}</td>
     <td style="white-space:nowrap">
       <button class="btn btn-sm btn-ghost" onclick="probeAsset(${a.id},this)">探测</button>
@@ -995,6 +995,7 @@ function osSelectHtml(cur){
   return h;
 }
 async function assetForm(id){
+  window.__nodesCache=window.__nodesCache||await api('/nodes');
   const nodes=window.__nodes||await api('/nodes');
   await loadFieldOptions();
   try{const all=await api('/assets');
@@ -1005,6 +1006,7 @@ async function assetForm(id){
   let title='新建资产';
   if(id){
     const rows=await api('/assets');a=rows.find(x=>x.id===id)||a;a.labels_arr=parseLabels(a.labels);title='编辑资产 · '+a.hostname;
+    try{a.extra_nodes=await api('/assets/'+id+'/extra-nodes')}catch(e){a.extra_nodes=[]}
   }
   openModal(`
   <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
@@ -1019,6 +1021,7 @@ async function assetForm(id){
     ${mRow('SSH 端口','<input id="m-sshport" type="number" value="'+a.ssh_port+'">')}
     ${mRow('RDP 端口','<input id="m-rdpport" type="number" value="'+a.rdp_port+'">')}
     ${mRow('所属节点','<select id="m-node">'+nodeOpts+'</select>')}
+    ${mRow('附属节点',`<div id="m-extra-wrap" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><div id="m-extra-chips" style="display:flex;gap:4px;flex-wrap:wrap"></div><select id="m-extra-add" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text)" onchange="addExtraNode(this)"><option value="">＋ 添加节点…</option></select></div><div class="hint">授权命中主节点链或任一附属节点链均生效（多节点归属）</div>`)}
     ${mRow('托管账号','<div style="display:flex;gap:8px;align-items:center"><input id="m-account" value="'+esc(a.account||'root')+'" placeholder="root / administrator" style="flex:1">'+(id&&a.account?`<button class="btn btn-ghost" style="white-space:nowrap;color:#cf1322;border-color:#cf1322" onclick="unManageAccount(${id},'${esc(a.account)}')">取消托管</button>`:'')+'</div><div class="hint">'+(id?(a.account?`已托管账号：<b class="mono">${esc(a.account)}</b>（凭据加密存储，不可查看；取消托管后连接时需手动输入账密）`:'⚠ 尚未托管账号，填入账号密码后将自动创建'):'凭据由堡垒机加密托管，运维全程不可见')+'</div>')}
     ${mRow('账号密码',`<input id="m-password" type="password" placeholder="${id?(a.account?'留空则不修改':'设置初始密码'):'初始密码'}">`)}
   </div>
@@ -1027,6 +1030,8 @@ async function assetForm(id){
     <button class="btn btn-primary" onclick="saveAsset(${id||0})">${id?'保存修改':'创 建'}</button>
   </div>`);
   document.getElementById('m-node').value=a.node_id;
+  window.__extraSel=new Set(a.extra_nodes||[]);
+  renderExtraChips();
   // 系统下拉回显：已知值选中，未知值落"其他"并填入输入框
   const osSel=document.getElementById('m-os');
   const osOther=document.getElementById('m-os-other');
@@ -1042,6 +1047,22 @@ function osOtherToggle(){
   if(!sel||!other)return;
   other.style.display=sel.value==='__other__'?'':'none';
 }
+function renderExtraChips(){
+  const box=document.getElementById('m-extra-chips');if(!box)return;
+  const sel=document.getElementById('m-extra-add');
+  box.innerHTML=[...window.__extraSel].map(id=>{
+    const n=(window.__nodesCache||[]).find(x=>x.id===id);
+    return `<span data-nid="${id}" style="display:inline-flex;gap:5px;align-items:center;background:var(--primary-light);color:var(--primary);border-radius:8px;padding:2px 9px;font-size:11.5px">${esc(n?n.name:('#'+id))} <b style="cursor:pointer" onclick="delExtraNode(${id})">✕</b></span>`;
+  }).join('');
+  if(sel){
+    sel.innerHTML='<option value="">＋ 添加节点…</option>'+
+      (window.__nodesCache||[]).filter(n=>!window.__extraSel.has(n.id)&&n.id!==+document.getElementById('m-node').value)
+      .map(n=>`<option value="${n.id}">${esc(n.name)}</option>`).join('');
+  }
+}
+function addExtraNode(sel){const v=+sel.value;if(v){window.__extraSel.add(v);renderExtraChips()}}
+function delExtraNode(id){window.__extraSel.delete(id);renderExtraChips()}
+
 function devTypeSwitch(){
   const v=document.getElementById('m-devtype').value;
   const h=document.getElementById('m-devtype-hint');
@@ -1077,6 +1098,7 @@ async function saveAsset(id){
     account:document.getElementById('m-account').value.trim(),
     password:document.getElementById('m-password').value||undefined,
     device_type:document.getElementById('m-devtype')?.value||'linux',
+    extra_nodes:[...(window.__extraSel||[])],
     enable_password:document.getElementById('m-enablepw')?.value||undefined
   };
   if(!body.hostname||!body.ip){toast('主机名与 IP 必填');return}

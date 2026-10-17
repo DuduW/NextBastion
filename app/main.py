@@ -545,7 +545,8 @@ async def node_delete(nid: int, p=Depends(require_role('admin'))):
         raise HTTPException(400, "根节点「全部资产」不可删除")
     if utils.query("SELECT COUNT(*) c FROM asset_nodes WHERE parent_id=%s", (nid,), one=True)['c']:
         raise HTTPException(400, "存在子节点，请先移走或删除子节点")
-    if utils.query("SELECT COUNT(*) c FROM assets WHERE node_id=%s", (nid,), one=True)['c']:
+    if utils.query("SELECT COUNT(*) c FROM assets WHERE node_id=%s", (nid,), one=True)['c'] or \
+       utils.query("SELECT COUNT(*) c FROM asset_extra_nodes WHERE node_id=%s", (nid,), one=True)['c']:
         raise HTTPException(400, "节点下仍有资产，请先移走资产")
     utils.execute("DELETE FROM asset_nodes WHERE id=%s", (nid,))
     write_audit(p['username'], 'node_delete', 'node', nid, {'name': row['name']})
@@ -589,6 +590,7 @@ async def list_assets(request: Request, p=Depends(auth)):
     node = request.query_params.get('node', '')
     sql = """SELECT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.ssh_port, a.rdp_port, a.device_type,
              a.status, a.node_id, n.name AS node_name,
+             (SELECT COUNT(*) FROM asset_extra_nodes x WHERE x.asset_id=a.id) AS extra_node_count,
              (SELECT acc.username FROM asset_accounts acc WHERE acc.asset_id=a.id AND acc.status='active' LIMIT 1) AS account,
              (SELECT COUNT(*) FROM asset_accounts acc2 WHERE acc2.asset_id=a.id AND acc2.status='active') AS account_count,
              a.labels
@@ -605,16 +607,36 @@ async def list_assets(request: Request, p=Depends(auth)):
             args += gids
         sql += f""" AND EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
                     AND ((p.asset_or_node_type='asset' AND p.asset_or_node_id=a.id)
-                      OR (p.asset_or_node_type='node' AND p.asset_or_node_id=a.node_id)))"""
+                      OR (p.asset_or_node_type='node' AND p.asset_or_node_id=a.node_id)
+                      OR (p.asset_or_node_type='node' AND p.asset_or_node_id IN (
+                            SELECT x.node_id FROM asset_extra_nodes x WHERE x.asset_id=a.id))))"""
     if q:
         # 搜索同时匹配：主机名 / IP / 分组（labels JSON 数组文本）
         sql += " AND (a.hostname LIKE %s OR a.ip LIKE %s OR a.labels LIKE %s)"
         args += [f"%{q}%", f"%{q}%", f"%{q}%"]
     if node:
-        sql += " AND a.node_id=%s"
-        args.append(node)
+        sql += " AND (a.node_id=%s OR EXISTS(SELECT 1 FROM asset_extra_nodes x WHERE x.asset_id=a.id AND x.node_id=%s))"
+        args += [node, node]
     sql += " ORDER BY a.id LIMIT 500"
     return utils.ok(utils.query(sql, args))
+
+
+def _set_extra_nodes(aid: int, node_ids: list, primary_node_id):
+    """V1.5：附属节点全量替换（去重、去主锚点）；返回变更数"""
+    clean = []
+    for n in (node_ids or []):
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            continue
+        if n != primary_node_id and n not in clean:
+            clean.append(n)
+    old = {r['node_id'] for r in utils.query("SELECT node_id FROM asset_extra_nodes WHERE asset_id=%s", (aid,))}
+    utils.execute("DELETE FROM asset_extra_nodes WHERE asset_id=%s", (aid,))
+    for n in clean:
+        if utils.query("SELECT id FROM asset_nodes WHERE id=%s", (n,), one=True):
+            utils.execute("INSERT IGNORE INTO asset_extra_nodes (asset_id, node_id) VALUES (%s,%s)", (aid, n))
+    return len(clean), sorted(old)
 
 @app.post("/api/v1/assets")
 async def create_asset(request: Request, p=Depends(require_role('admin'))):
@@ -633,7 +655,9 @@ async def create_asset(request: Request, p=Depends(require_role('admin'))):
         utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted, enable_secret_enc) VALUES (%s,%s,'password',%s,%s)",
                       (aid, b.get('account', 'root'), utils.encrypt_secret(b['password']),
                        utils.encrypt_secret(b['enable_password']) if b.get('enable_password') else None))
-    write_audit(p['username'], 'create_asset', 'asset', aid, {'hostname': b['hostname'], 'ip': b['ip']})
+    _set_extra_nodes(aid, b.get('extra_nodes') or [], b.get('node_id', 1))
+    write_audit(p['username'], 'create_asset', 'asset', aid, {'hostname': b['hostname'], 'ip': b['ip'],
+               'extra_nodes': b.get('extra_nodes') or []})
     return utils.ok({"id": aid})
 
 @app.put("/api/v1/assets/{aid}")
@@ -660,8 +684,19 @@ async def update_asset(aid: int, request: Request, p=Depends(require_role('admin
         else:
             utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted) VALUES (%s,%s,'password',%s)",
                           (aid, acct, utils.encrypt_secret(b['password'])))
-    write_audit(p['username'], 'update_asset', 'asset', aid, {'hostname': b.get('hostname')})
+    # V1.5：附属节点全量替换（body 带 extra_nodes 时）
+    if b.get('extra_nodes') is not None:
+        _set_extra_nodes(aid, b.get('extra_nodes'), b.get('node_id', row['node_id']))
+    write_audit(p['username'], 'update_asset', 'asset', aid, {'hostname': b.get('hostname'),
+               'extra_nodes': b.get('extra_nodes')})
     return utils.ok(message="updated")
+
+@app.get("/api/v1/assets/{aid}/extra-nodes")
+async def asset_extra_nodes(aid: int, p=Depends(require_role('admin'))):
+    """V1.5：资产附属节点明细（编辑回显用）"""
+    rows = utils.query("""SELECT n.id, n.name FROM asset_extra_nodes x
+                          JOIN asset_nodes n ON x.node_id=n.id WHERE x.asset_id=%s ORDER BY n.id""", (aid,))
+    return utils.ok([r['id'] for r in rows])
 
 @app.delete("/api/v1/assets/{aid}/accounts/{account_id}")
 async def remove_account(aid: int, account_id: int, p=Depends(require_role('admin'))):
@@ -861,22 +896,34 @@ def user_group_ids(user_id: int):
     rows = utils.query("SELECT group_id FROM user_group_map WHERE user_id=%s", (user_id,))
     return [r['group_id'] for r in rows]
 
-def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
-    """五维授权判定：用户/组 × 资产/节点（含父节点继承） × 账号 × 时段。返回命中的策略或 None"""
-    asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
-    if not asset:
-        return None
-    # 资产所在节点及其全部祖先（父节点授权对子节点资产生效）
-    node_ids = [asset['node_id']]
-    cur = asset['node_id']
-    seen = set()
+def _node_ids_with_ancestors(node_id) -> list:
+    """单节点 → 自身+全部祖先（沿 parent 链，防环）"""
+    ids, cur, seen = [], node_id, set()
     while cur is not None and cur not in seen:
         seen.add(cur)
+        ids.append(cur)
         parent = utils.query("SELECT parent_id FROM asset_nodes WHERE id=%s", (cur,), one=True)
         if not parent or parent['parent_id'] is None:
             break
         cur = parent['parent_id']
-        node_ids.append(cur)
+    return ids
+
+
+def _asset_node_universe(asset: dict) -> list:
+    """V1.5 方案B：资产节点全集 = 主锚点链 ∪ 各附属节点链（授权/可见性统一口径）"""
+    ids = set(_node_ids_with_ancestors(asset['node_id']))
+    for row in utils.query("SELECT node_id FROM asset_extra_nodes WHERE asset_id=%s", (asset['id'],)):
+        ids.update(_node_ids_with_ancestors(row['node_id']))
+    return list(ids)
+
+
+def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
+    """五维授权判定：用户/组 × 资产/节点（含父节点继承与附属节点，V1.5） × 账号 × 时段。返回命中的策略或 None"""
+    asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
+    if not asset:
+        return None
+    # V1.5：主锚点祖先链 + 附属节点祖先链（任一节点策略命中即授权）
+    node_ids = _asset_node_universe(asset)
     gids = user_group_ids(user['id'])
     conds_user = "(user_or_group_type='user' AND user_or_group_id=%s)"
     args = [user['id']]
@@ -916,16 +963,7 @@ def check_access_all(user: dict, asset_id: int, account: str) -> list:
     asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
     if not asset:
         return []
-    node_ids = [asset['node_id']]
-    cur = asset['node_id']
-    seen = set()
-    while cur is not None and cur not in seen:
-        seen.add(cur)
-        parent = utils.query("SELECT parent_id FROM asset_nodes WHERE id=%s", (cur,), one=True)
-        if not parent or parent['parent_id'] is None:
-            break
-        cur = parent['parent_id']
-        node_ids.append(cur)
+    node_ids = _asset_node_universe(asset)
     gids = user_group_ids(user['id'])
     conds_user = "(user_or_group_type='user' AND user_or_group_id=%s)"
     args = [user['id']]
@@ -987,8 +1025,10 @@ async def my_assets(payload=Depends(auth)):
     if gids:
         conds += f" OR (p.user_or_group_type='group' AND p.user_or_group_id IN ({','.join(['%s']*len(gids))}))"
         args += gids
-    # 节点继承：资产直接节点或其任意祖先节点上的策略都生效（与 check_access 一致）
-    sql = f"""SELECT DISTINCT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.labels, a.device_type, n.name AS node_name
+    # 节点继承（V1.5 含附属节点）：主链或任一附属链上的策略都生效
+    sql = f"""SELECT DISTINCT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.labels, a.device_type,
+                     n.name AS node_name,
+                     (SELECT COUNT(*) FROM asset_extra_nodes x WHERE x.asset_id=a.id) AS extra_node_count
               FROM assets a
               JOIN asset_nodes n ON a.node_id=n.id
               WHERE EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
@@ -1000,7 +1040,9 @@ async def my_assets(payload=Depends(auth)):
                                              SELECT n1.parent_id FROM asset_nodes n1 WHERE n1.id=a.node_id
                                              UNION ALL
                                              SELECT n3.parent_id FROM asset_nodes n3 JOIN up ON n3.id=up.id WHERE n3.parent_id IS NOT NULL)
-                                           SELECT id FROM up)))))
+                                           SELECT id FROM up)))
+                              OR (p.asset_or_node_type='node' AND p.asset_or_node_id IN (
+                                    SELECT x.node_id FROM asset_extra_nodes x WHERE x.asset_id=a.id))))
               ORDER BY a.id LIMIT 300"""
     return utils.ok(utils.query(sql, args))
 
