@@ -38,16 +38,64 @@ _OP_LEVEL = {   # 动词 → 所需最低级别
 }
 
 
+def _strip_sql_noise(t: str) -> str:
+    """剥掉语句前缀噪声：注释（-- # /*...*/）、括号与空白——提取真实首动词"""
+    t = (t or "").lstrip("( \n\t\r;")
+    while True:
+        if t.startswith("--"):                    # 行注释
+            t = t.split("\n", 1)[1] if "\n" in t else ""
+        elif t.startswith("#"):                   # 行注释（MySQL 方言）
+            t = t.split("\n", 1)[1] if "\n" in t else ""
+        elif t.startswith("/*"):                  # 块注释
+            end = t.find("*/", 2)
+            t = t[end + 2:] if end >= 0 else ""
+        else:
+            break
+        t = t.lstrip("( \n\t\r;")
+    return t
+
+
+def _cte_main_verb(t: str) -> str:
+    """WITH ... <主动词>：跳过全部 CTE 定义块（括号平衡），取主语句首个动词"""
+    m = re.match(r"with\b", t, re.I)
+    if not m:
+        return t
+    i = 4
+    depth = 0
+    n = len(t)
+    while i < n:
+        ch = t[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and ch == ",":
+            pass
+        elif depth == 0:
+            # 块外遇词字符——判断是否 AS 别名后的主句动词：CTE 段落形如 name [(cols)] AS (...)
+            word_m = re.match(r"\w+", t[i:])
+            if word_m:
+                w = word_m.group(0).lower()
+                # CTE 结构词跳过；遇到读写动词即主句
+                if w in ("recursive", "as", "not", "materialized"):
+                    i += len(word_m.group(0))
+                    continue
+                if w in _OP_LEVEL and w != "with":
+                    return t[i:]
+        i += 1
+    return t[i:]
+
+
 def required_level(sql_text: str) -> int:
-    """语句所需最低权限级别（CTE WITH 前缀跳过取主语句动词）"""
-    t = (sql_text or "").lstrip("( \n\t;").lower()
-    for _ in range(3):   # 跳过 WITH ... 前缀的粘动词（简化：逐词扫首个命中动词）
+    """语句所需最低权限级别（前缀注释/括号已剥离；WITH-CTE 取主语句动词）"""
+    t = _strip_sql_noise(sql_text).lower()
+    for _ in range(4):
         m = re.match(r"(\w+)", t)
         if not m:
             return 1
         op = m.group(1)
         if op == "with":
-            t = re.sub(r"^with\s+.*?\b(select|insert|update|delete)\b", r"\1", t, count=1, flags=re.S | re.I)
+            t = _strip_sql_noise(_cte_main_verb(t))
             continue
         return _OP_LEVEL.get(op, 4)   # 未知动词按最高级（保守）
     return _OP_LEVEL.get(re.match(r"(\w+)", t).group(1), 4)
