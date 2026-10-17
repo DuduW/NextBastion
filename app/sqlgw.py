@@ -145,7 +145,9 @@ def run_query(fsid: str, sql_text: str, match_fn=None):
     """执行 SQL：前置拦截（只读+高危规则）→ 执行 → 分页结果 + 审计。
     match_fn(cmdline) → (action, rule)（由 main.match_filter 注入）"""
     s = _sess(fsid)
-    sql_text = (sql_text or "").strip().rstrip(";")
+    # NBSP 等 Unicode 空白归一化（浏览器 contenteditable 常见，MySQL 语法报 1064）
+    sql_text = re.sub(r"[\u00a0\u2000-\u200a\u202f\u205f\u3000]", " ", sql_text or "")
+    sql_text = sql_text.strip().rstrip(";")
     if not sql_text:
         return {"cols": [], "rows": [], "affected": 0, "elapsed": 0, "truncated": False}
     t0 = time.time()

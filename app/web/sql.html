@@ -111,7 +111,8 @@ function toggleDb(el,i){const l=document.getElementById('tl-'+i);const open=l.st
 function insert(name){const ed=document.getElementById('editor');ed.innerText+=name;ed.focus()}
 
 async function runSql(){
-  const sql=document.getElementById('editor').innerText.trim();
+  // NBSP 等 Unicode 空白 → 普通空格（contenteditable 会产生  ，MySQL 不认）
+  const sql=document.getElementById('editor').innerText.replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g,' ').trim();
   if(!sql)return;
   const res=document.getElementById('result'),hist=document.getElementById('hist'),stat=document.getElementById('stat');
   res.innerHTML='<div class="msg info">⏳ 执行中…</div>';
