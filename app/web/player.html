@@ -105,7 +105,9 @@ window.doSeek=t=>{
 
 async function load(){
   const r=await fetch(`/api/v1/sessions/${SID}/cast`,{headers:{Authorization:'Bearer '+TOKEN}});
-  if(!r.ok){document.getElementById('meta').textContent='录像加载失败（无 cast 文件）';return}
+  if(!r.ok){
+    document.getElementById('meta').innerHTML='<span style="color:#f38ba8;font-size:15px">⚠ 该会话无录像文件（SQL 录像于 V1.5 后启用，历史会话只有审计流水）</span>';
+    document.getElementById('btn-play').disabled=true;return}
   const text=await r.text();
   let header=null;
   for(const l of text.split('\n')){

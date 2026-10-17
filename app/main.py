@@ -1087,9 +1087,14 @@ async def history_sessions(request: Request, p=Depends(require_role('admin','aud
         where += " AND s.is_high_risk=1"
     total = utils.query("SELECT COUNT(*) AS n" + where, args, one=True)['n']
     rows = utils.query("""SELECT s.id, s.protocol, s.started_at, s.ended_at, s.duration_s, s.status, s.is_high_risk,
-             u.username, a.hostname, (SELECT COUNT(*) FROM command_logs c WHERE c.session_id=s.id) AS cmd_count"""
+             u.username, a.hostname, (SELECT COUNT(*) FROM command_logs c WHERE c.session_id=s.id) AS cmd_count,
+             (s.cast_file_path IS NOT NULL AND s.protocol IN ('ssh','sql')) AS has_cast_path"""
              + where + " ORDER BY s.started_at DESC LIMIT %s OFFSET %s",
              args + [ps, (page - 1) * ps])
+    # 应用层校验录像文件存在性（老会话有路径但文件未生成——SQL 录像 V1.5 才上线）
+    for r in rows:
+        pth = utils.query("SELECT cast_file_path FROM sessions WHERE id=%s", (r["id"],), one=True)["cast_file_path"]
+        r["has_cast"] = bool(pth) and os.path.exists(pth)
     return utils.ok({"rows": rows, "total": total, "page": page,
                      "pages": max(1, (total + ps - 1) // ps), "page_size": ps})
 

@@ -692,7 +692,9 @@ async sessions(){
     <td>${protoBadge(s.protocol)}</td><td>${esc(s.started_at)}</td><td>${s.duration_s}s</td>
     <td>${s.cmd_count>0?s.cmd_count:'-'}</td>
     <td>${s.is_high_risk?badge('高危','red'):badge('正常','green')}</td>
-    <td><button class="btn btn-sm btn-ghost" onclick="viewCast('${s.id}','${s.protocol}','${esc(s.username)}')">录像</button></td></tr>`).join('');
+    <td>${s.protocol!=='rdp'&&!s.has_cast
+      ?'<span class="hint" title="SQL 录像于 V1.5 后启用，历史会话仅有审计流水">—</span>'
+      :`<button class="btn btn-sm btn-ghost" onclick="viewCast('${s.id}','${s.protocol}','${esc(s.username)}')">录像</button>`}</td></tr>`).join('');
   return `<div class="page-head"><div><h2>会话审计</h2><div class="sub">历史会话（SSH=cast 录像 · RDP=图形录像）</div></div>
     <button class="btn btn-ghost" onclick="location.href=API+'/export/sessions'">📥 导出 CSV</button></div>
   <div class="card">${rows.length?`<table><thead><tr><th>会话 ID</th><th>用户</th><th>资产</th><th>协议</th><th>开始</th><th>时长</th><th>命令数</th><th>风险</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无历史会话</div>'}${pagerHtml('sess',d)}</div>`;
