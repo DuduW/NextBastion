@@ -16,7 +16,10 @@ body{padding:10px}
 .ro{background:#12351f;color:#5ad07f;border-radius:6px;padding:1px 8px;font-size:11px}
 .rw{background:#3a2b10;color:var(--warn);border-radius:6px;padding:1px 8px;font-size:11px}
 .rec{color:#f48771}
-#layout{flex:1;display:grid;grid-template-columns:210px 1fr 340px;min-height:0}
+#layout{flex:1;display:flex;min-height:0}
+#schema{flex:0 0 210px}
+#right{flex:1 1 auto;min-width:0}
+#ai-wrap{flex:0 0 340px}
 #schema{border-right:1px solid var(--bd);overflow:auto;padding:12px;font-size:12.5px}
 #schema .db{color:var(--accent);cursor:pointer;padding:2px 0;user-select:none}
 #schema .db:before{content:'▸ ';opacity:.6}

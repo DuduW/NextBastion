@@ -20,9 +20,9 @@
 </head>
 <body>
 <div class="bar"><span id="info">连接中...</span><span class="rec">REC</span><button class="btn-f" onclick="openFiles()">📁 文件</button><button class="btn-x" onclick="window.close()">断开</button></div>
-<div style="flex:1;display:grid;grid-template-columns:1fr 340px;min-height:0">
-<div id="term-wrap"></div>
-<div id="ai-wrap" style="min-height:0"></div>
+<div style="flex:1;display:flex;min-height:0">
+<div id="term-wrap" style="flex:1 1 auto;min-width:0"></div>
+<div id="ai-wrap" style="flex:0 0 340px;min-height:0"></div>
 </div>
 <script src="vendor/xterm.js"></script>
 <script src="vendor/xterm-addon-fit.js"></script>

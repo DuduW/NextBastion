@@ -40,9 +40,9 @@
     const scene=opts.scene; const history=[];
     root.style.position=root.style.position||'relative';
     const WKEY='nb_ai_width';
-    const saved=+(localStorage.getItem(WKEY)||340);
-    const applyW=w=>{root.style.width=w+'px';root.style.maxWidth=w+'px';root.style.flexBasis=w+'px';root.style.minWidth='0';};
-    applyW(Math.min(Math.floor(window.innerWidth*0.85),Math.max(280,saved)));
+    const saved=parseInt(localStorage.getItem(WKEY))||Math.floor(window.innerWidth*0.2);
+    const applyW=w=>{root.style.width='';root.style.maxWidth='';root.style.flexBasis=w+'px';root.style.flexGrow='0';root.style.flexShrink='0';};
+    applyW(Math.max(280,Math.min(Math.floor(window.innerWidth*0.6),saved)));
     root.innerHTML=`<div class="${NS}" style="height:100%;position:relative">
       <div class="${NS}-resizer" title="拖拽调整宽度"></div>
       <div class="${NS}-head"><span style="font-size:15px">✨</span><b>AI 辅助分析</b><span style="flex:1"></span><span style="flex:1"></span><span data-expand style="font-size:14px;color:#8a9199;cursor:pointer;padding:0 4px" title="放大为大窗口">⤢</span><span data-collapse style="font-size:16px;color:#8a9199;cursor:pointer;padding:0 4px" title="收起面板">⟩</span></div>
@@ -113,17 +113,15 @@
     const host=()=>root.parentElement;
     const syncHost=w=>{
       const h=host();if(!h)return;
-      // 宿主为 grid 时同步最后一列宽
-      if(getComputedStyle(h).display==='grid'){
-        const cols=getComputedStyle(h).gridTemplateColumns.split(' ');
-        cols[cols.length-1]=w+'px';
-        h.style.gridTemplateColumns=cols.join(' ');
+      // flex 宿主：直接 flexBasis（主区 flex:1 自动压缩——AI 占比即页面占比）
+      if(getComputedStyle(h).display!=='grid'&&h.id!=='ai-float'){
+        root.style.flexBasis=w+'px';
       }
-      // 宿主为 ai-float（fixed 定位）时同步 width
-      if(h&&h.id==='ai-float'){h.style.width=w+'px';h.style.right='16px';}
+      // 控制台浮层：同步 width
+      if(h.id==='ai-float'){h.style.width=w+'px';h.style.right='16px';}
     };
     rz.addEventListener('mousedown',e=>{dragging=true;rz.classList.add('on');document.body.style.cursor='col-resize';e.preventDefault()});
-    rz.addEventListener('dblclick',()=>{applyW(340);syncHost(340);localStorage.setItem(WKEY,'340')});
+    rz.addEventListener('dblclick',()=>{const d=Math.floor(window.innerWidth*0.2);applyW(d);syncHost(d);localStorage.setItem(WKEY,String(d))});
     window.addEventListener('mousemove',e=>{
       if(!dragging)return;
       let w;
@@ -131,14 +129,14 @@
         w=Math.min(Math.floor(window.innerWidth*0.95),Math.max(400,window.innerWidth*0.95-e.clientX));
         root.style.width=w+'px';root.style.maxWidth=w+'px';
       }else{
-        w=Math.min(Math.floor(window.innerWidth*0.85),Math.max(280,window.innerWidth-e.clientX));
+        w=Math.min(Math.floor(window.innerWidth*0.6),Math.max(280,window.innerWidth-e.clientX));
         applyW(w);syncHost(w);
       }
     });
     window.addEventListener('mouseup',()=>{
       if(!dragging)return;
       dragging=false;rz.classList.remove('on');document.body.style.cursor='';
-      if(!expanded)localStorage.setItem(WKEY,String(parseInt(root.style.width)||340));
+      if(!expanded)localStorage.setItem(WKEY,String(root.offsetWidth||340));
     });
     // 大窗模式：面板浮出为居中大窗口（可继续拖宽），⤢/ESC 还原
     let expanded=false;
