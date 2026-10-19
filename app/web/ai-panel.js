@@ -109,7 +109,7 @@
     }
     // 拖拽调宽（含网格宿主页适配）+ 记忆
     const rz=root.querySelector('.'+NS+'-resizer');
-    let dragging=false;
+    let dragging=false,lastW=null;
     const host=()=>root.parentElement;
     const syncHost=w=>{
       const h=host();if(!h)return;
@@ -130,13 +130,13 @@
         root.style.width=w+'px';root.style.maxWidth=w+'px';
       }else{
         w=Math.min(Math.floor(window.innerWidth*0.6),Math.max(280,window.innerWidth-e.clientX));
-        applyW(w);syncHost(w);
+        lastW=w;applyW(w);syncHost(w);
       }
     });
     window.addEventListener('mouseup',()=>{
       if(!dragging)return;
       dragging=false;rz.classList.remove('on');document.body.style.cursor='';
-      if(!expanded)localStorage.setItem(WKEY,String(root.offsetWidth||340));
+      if(!expanded&&lastW!=null)localStorage.setItem(WKEY,String(lastW));
     });
     // 大窗模式：面板浮出为居中大窗口（可继续拖宽），⤢/ESC 还原
     let expanded=false;
