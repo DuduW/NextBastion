@@ -84,7 +84,7 @@ def build_context_pack(scene: str, handle: dict, user: dict) -> str:
     return "\n\n".join(parts)
 
 
-def stream_chat(scene: str, question: str, context_pack: str, history: list):
+def stream_chat(scene: str, question: str, context_pack: str, history: list, effort: str = None):
     """生成器：逐段 yield SSE data。history 为 [{role,content}]（服务端已限长）。"""
     cfg = get_ai_config()
     if not cfg or not cfg.get("base_url"):
@@ -104,7 +104,8 @@ def stream_chat(scene: str, question: str, context_pack: str, history: list):
         "temperature": float(cfg.get("temperature") or 0.3),
         "stream": True,
         # V1.8.1 性能：low=不思考直答（正文 0.8s 起流）high=深度思考（复杂分析，正文延迟 20s+）
-        "reasoning_effort": cfg.get("reasoning_effort") or "low",
+        # 前端会话级切换（请求体 effort）优先，其次全局配置，缺省 low
+        "reasoning_effort": effort or cfg.get("reasoning_effort") or "low",
     }).encode()
     req = urllib.request.Request(cfg["base_url"].rstrip("/") + "/chat/completions",
                                  data=payload, method="POST")

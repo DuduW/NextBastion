@@ -2334,11 +2334,12 @@ async def ai_chat(request: Request, p=Depends(auth)):
             handle.pop("fsid", None)
     user = utils.query("SELECT id, username FROM users WHERE id=%s", (p["sub"],), one=True) or {}
     context_pack = ai_proxy.build_context_pack(scene, handle, user)
+    effort = b.get("effort") if b.get("effort") in ("low", "high") else None   # 会话级覆盖（V1.8.1）
 
     async def gen():
         answer_len = 0
         try:
-            for chunk in ai_proxy.stream_chat(scene, question, context_pack, b.get("history") or []):
+            for chunk in ai_proxy.stream_chat(scene, question, context_pack, b.get("history") or [], effort):
                 answer_len += len(chunk.get("delta", ""))
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         except Exception as e:

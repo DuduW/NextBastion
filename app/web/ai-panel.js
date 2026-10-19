@@ -16,6 +16,7 @@
   .${NS}-bu{background:#1c2733;border:1px solid #26333f;align-self:flex-end;margin-left:15%}
   .${NS}-ba{background:#161d26;border:1px solid #232b36;margin-right:4%}
   .${NS}-think{color:#5b6773;font-size:11.5px;border-left:2px solid #2c3947;padding-left:8px;margin:4px 0;max-height:120px;overflow:auto}
+  .${NS}-think-title{color:#b78ce0;font-size:11.5px}
   .${NS}-code{background:#0b0f14;border:1px solid #232b36;border-radius:8px;padding:8px 10px;margin:6px 0;font-size:12px;position:relative;white-space:pre-wrap;color:#d4d4d4}
   .${NS}-copy{position:absolute;top:4px;right:8px;font-size:10.5px;color:#4ec9b0;cursor:pointer}
   .${NS}-quick{display:flex;gap:6px;padding:8px 12px 4px;flex-wrap:wrap}
@@ -54,6 +55,12 @@
     </div>`;
     const body=root.querySelector('[data-body]'),inp=root.querySelector('[data-in]'),quick=root.querySelector('[data-quick]'),ctxEl=root.querySelector('[data-ctx]');
 
+    // V1.8.1 改善①：会话级思考深度快捷切换（默认 low；点 🧠 该会话切 high）
+    const eb=document.createElement('span');
+    eb.className=NS+'-qb';eb.id=NS+'-effort';eb.title='思考深度：low=秒回直答 / high=深度思考（该会话生效）';
+    const syncEffort=()=>{const hi=(localStorage.getItem('nb_ai_effort')==='high');eb.textContent=hi?'🧠 深度思考':'⚡ 快速直答';eb.style.borderColor=hi?'#b78ce0':'';eb.style.color=hi?'#b78ce0':'';};
+    eb.onclick=()=>{const cur=localStorage.getItem('nb_ai_effort')==='high';localStorage.setItem('nb_ai_effort',cur?'low':'high');syncEffort();};
+    syncEffort();quick.appendChild(eb);
     (opts.quickActions||[]).forEach(a=>{
       const b=document.createElement('span');b.className=NS+'-qb';b.textContent=a.label;
       b.onclick=()=>ask(a.question);quick.appendChild(b);
@@ -82,11 +89,12 @@
     async function ask(q){
       if(busy||!q)return;busy=true;renderCtx();
       bubble(NS+'-bu',esc(q));
-      const ai=bubble(NS+'-ba','<span class="'+NS+'-typing">✨ 分析中…</span>');
+      const isHigh=(localStorage.getItem('nb_ai_effort')==='high');
+    const ai=bubble(NS+'-ba',`<span class="${NS}-think-title">${isHigh?'🧠':'✨'} ${isHigh?'深度思考中…（思考过程见下方，正文随后）':'分析中…'}</span><span class="${NS}-typing"></span>`);
       const handle=opts.getHandle?opts.getHandle():{};
       try{
         const r=await fetch('/api/v1/ai/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+opts.token()},
-          body:JSON.stringify({scene,question:q,handle,history:history.slice(-6)})});
+          body:JSON.stringify({scene,question:q,handle,history:history.slice(-6),effort:localStorage.getItem('nb_ai_effort')||'low'})});
         if(!r.ok){const e=await r.json().catch(()=>({}));ai.innerHTML='❌ '+(e.detail||('HTTP '+r.status));return}
         const reader=r.body.getReader(),dec=new TextDecoder();
         let ans='',think='',buf='';
