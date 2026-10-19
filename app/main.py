@@ -1847,6 +1847,97 @@ async def export_data(kind: str, request: Request, p=Depends(require_role('admin
 
 # ---- P1-9 高危告警 Webhook ----
 WEBHOOKS_KEY = "webhook_urls"
+
+# ---- V1.8 AI 模型连接配置（AI 辅助分析面板 · PRD D1-a 内网 OpenAI 兼容端点）----
+def _ai_config_row() -> dict:
+    row = utils.query("SELECT detail FROM audit_logs WHERE action='ai_model_config' ORDER BY id DESC LIMIT 1", one=True)
+    try:
+        cfg = json.loads(row['detail']) if row else {}
+    except Exception:
+        cfg = {}
+    # api_key 永不回显明文（只回显尾 4 位）
+    if cfg.get("api_key"):
+        cfg["api_key_masked"] = "****" + str(cfg["api_key"])[-4:]
+        cfg["has_api_key"] = True
+    cfg.pop("api_key", None)
+    return cfg
+
+
+@app.get("/api/v1/settings/ai-model")
+async def get_ai_model(p=Depends(require_role('admin'))):
+    return utils.ok(_ai_config_row())
+
+
+@app.post("/api/v1/settings/ai-model")
+async def set_ai_model(request: Request, p=Depends(require_role('admin'))):
+    """{base_url, api_key?, model, max_tokens, temperature, enabled}
+    api_key 留空=保留旧值（标准不回显语义）；enabled 控制面板可见性"""
+    b = await request.json()
+    base_url = (b.get("base_url") or "").strip().rstrip("/")
+    if base_url and not base_url.startswith(("http://", "https://")):
+        raise HTTPException(400, "base_url 必须以 http:// 或 https:// 开头")
+    # SSRF 防护：仅允许内网/环回地址（AI 端点应部署在内网）
+    if base_url:
+        try:
+            host = base_url.split("//", 1)[1].split("/")[0].split(":")[0]
+            import socket
+            ip = socket.gethostbyname(host)
+            import ipaddress
+            if not ipaddress.ip_address(ip).is_private:
+                raise HTTPException(400, f"安全限制：AI 端点必须是内网地址（{host} 解析为公网 {ip}）——外部 API 请走内网网关代理")
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # 解析失败留给连接测试去验证
+    old = _ai_config_row_raw()
+    cfg = {
+        "base_url": base_url,
+        "model": _sanitize_text((b.get("model") or "").strip(), 64) or "deepseek-r1",
+        "max_tokens": min(8192, max(256, int(b.get("max_tokens") or 4096))),
+        "temperature": min(2.0, max(0.0, float(b.get("temperature") or 0.3))),
+        "enabled": 1 if b.get("enabled") else 0,
+        "api_key": (b.get("api_key") or "").strip() or (old or {}).get("api_key") or "",
+    }
+    write_audit(p['username'], 'ai_model_config', 'system', 0, cfg)
+    return utils.ok({"saved": True})
+
+
+def _ai_config_row_raw() -> dict:
+    row = utils.query("SELECT detail FROM audit_logs WHERE action='ai_model_config' ORDER BY id DESC LIMIT 1", one=True)
+    try:
+        return json.loads(row['detail']) if row else {}
+    except Exception:
+        return {}
+
+
+@app.post("/api/v1/settings/ai-model/test")
+async def test_ai_model(request: Request, p=Depends(require_role('admin'))):
+    """对已保存（或临时提交）的配置发一次 1-token 探活请求，返回成败/延迟/模型回包"""
+    b = await request.json()
+    cfg = _ai_config_row_raw()
+    base_url = (b.get("base_url") or cfg.get("base_url") or "").strip().rstrip("/")
+    api_key = (b.get("api_key") or cfg.get("api_key") or "").strip()
+    model = (b.get("model") or cfg.get("model") or "").strip()
+    if not base_url:
+        return utils.ok({"ok": False, "error": "未配置 base_url"})
+    import urllib.request
+    t0 = time.time()
+    try:
+        payload = json.dumps({"model": model, "messages": [{"role": "user", "content": "ping"}],
+                              "max_tokens": 1}).encode()
+        req = urllib.request.Request(base_url + "/chat/completions", data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+        if api_key:
+            req.add_header("Authorization", "Bearer " + api_key)
+        resp = urllib.request.urlopen(req, timeout=10)
+        body = json.loads(resp.read().decode())
+        return utils.ok({"ok": True, "latency_ms": int((time.time() - t0) * 1000),
+                         "model": body.get("model", model), "http": resp.status})
+    except Exception as e:
+        return utils.ok({"ok": False, "error": f"{type(e).__name__}: {str(e)[:80]}",
+                         "latency_ms": int((time.time() - t0) * 1000)})
+
+
 @app.get("/api/v1/settings/webhook")
 async def get_webhook(p=Depends(require_role('admin'))):
     row = utils.query("SELECT detail FROM audit_logs WHERE action='webhook_config' ORDER BY id DESC LIMIT 1", one=True)

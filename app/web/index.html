@@ -534,6 +534,7 @@ async settings(){
   let fo={os_type:[],label:[]};
   try{fo=await api('/assets/field-options');window.__fieldOptions=fo;}catch(e){}
   setTimeout(loadSyslog,100);
+  setTimeout(loadAIModel,120);
   return `<div class="page-head"><div><h2>系统设置</h2><div class="sub">告警通道 · 目录认证 · 系统信息</div></div></div>
   <div class="card" style="margin-bottom:16px">
     <div style="font-weight:600;margin-bottom:4px">🗂 资产字段选项（数据库字典）</div>
@@ -562,6 +563,45 @@ async settings(){
       <button class="btn btn-ghost" id="wh-test-btn" onclick="testWebhook()">📡 发送测试</button>
     </div>
     <div id="wh-test-result" style="margin-top:10px"></div>
+  </div>
+
+  <!-- ================= V1.8 AI 模型连接 ================= -->
+  <div class="card" style="margin-bottom:16px" id="ai-model-card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div style="font-weight:600">✨ AI 模型连接（AI 辅助分析）</div>
+      <span style="font-size:11px;color:var(--text-3)">OpenAI 兼容端点 · 内网部署（vLLM/Ollama/内部网关）· 供右侧 AI 面板调用</span>
+    </div>
+    <div style="display:flex;gap:10px;margin:10px 0;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="ai-enabled"> 启用 AI 面板</label>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:10px">
+      <div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:4px">服务地址 base_url（OpenAI 兼容）</div>
+        <input id="ai-baseurl" placeholder="http://192.168.110.120:8000/v1" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px">
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:4px">API Key（留空保留旧值）</div>
+        <input id="ai-apikey" type="password" placeholder="sk-…（内网服务可留空）" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px">
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:4px">模型名称</div>
+        <input id="ai-model" placeholder="deepseek-r1 / qwen2.5-32b …" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px">
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:4px">max_tokens（256-8192）</div>
+        <input id="ai-maxtok" type="number" value="4096" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px">
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:4px">temperature（0-2）</div>
+        <input id="ai-temp" type="number" step="0.1" value="0.3" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:12px">
+      </div>
+    </div>
+    <div style="font-size:11.5px;color:var(--text-3);margin-bottom:8px">🔒 安全：端点必须是<b>内网地址</b>（公网地址会被拒绝）；API Key 仅存储不回显；AI 交互将全量审计</div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="saveAIModel()">保存配置</button>
+      <button class="btn btn-ghost" onclick="testAIModel()">📡 连接测试</button>
+      <span id="ai-test-result" style="font-size:12px"></span>
+    </div>
   </div>
 
   <!-- ================= F5 Syslog 转发 ================= -->
@@ -1584,6 +1624,47 @@ function syslogCollect(){
           server:document.getElementById('sl-server').value.trim(),
           proto:document.getElementById('sl-proto').value,events};
 }
+async function loadAIModel(){
+  try{
+    const c=await api('/settings/ai-model');
+    document.getElementById('ai-enabled').checked=!!c.enabled;
+    document.getElementById('ai-baseurl').value=c.base_url||'';
+    document.getElementById('ai-model').value=c.model||'';
+    document.getElementById('ai-maxtok').value=c.max_tokens||4096;
+    document.getElementById('ai-temp').value=c.temperature??0.3;
+    if(c.has_api_key)document.getElementById('ai-apikey').placeholder='已配置（'+c.api_key_masked+'）· 留空保留';
+  }catch(e){}
+}
+async function saveAIModel(){
+  const body={
+    enabled:document.getElementById('ai-enabled').checked,
+    base_url:document.getElementById('ai-baseurl').value.trim(),
+    api_key:document.getElementById('ai-apikey').value.trim(),
+    model:document.getElementById('ai-model').value.trim(),
+    max_tokens:+document.getElementById('ai-maxtok').value||4096,
+    temperature:+document.getElementById('ai-temp').value||0.3
+  };
+  try{
+    await api('/settings/ai-model',{method:'POST',body:JSON.stringify(body)});
+    toast('AI 模型配置已保存');document.getElementById('ai-apikey').value='';
+    loadAIModel();
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function testAIModel(){
+  const el=document.getElementById('ai-test-result');
+  el.textContent='⏳ 测试中…';el.style.color='var(--text-3)';
+  const body={
+    base_url:document.getElementById('ai-baseurl').value.trim(),
+    api_key:document.getElementById('ai-apikey').value.trim()||undefined,
+    model:document.getElementById('ai-model').value.trim()
+  };
+  try{
+    const r=await api('/settings/ai-model/test',{method:'POST',body:JSON.stringify(body)});
+    if(r.ok){el.textContent=`✅ 连接成功 · ${r.model} · ${r.latency_ms}ms`;el.style.color='#1e8e3e'}
+    else{el.textContent='❌ '+r.error;el.style.color='#c0392b'}
+  }catch(e){el.textContent='❌ '+e.message;el.style.color='#c0392b'}
+}
+
 async function saveSyslog(){
   try{
     await api('/settings/syslog',{method:'POST',body:JSON.stringify(syslogCollect())});
