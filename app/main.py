@@ -1890,11 +1890,15 @@ async def set_ai_model(request: Request, p=Depends(require_role('admin'))):
         except Exception:
             pass  # 解析失败留给连接测试去验证
     old = _ai_config_row_raw()
+    effort = (b.get("reasoning_effort") or "low").strip()
+    if effort not in ("low", "high"):
+        effort = "low"
     cfg = {
         "base_url": base_url,
         "model": _sanitize_text((b.get("model") or "").strip(), 64) or "deepseek-r1",
         "max_tokens": min(8192, max(256, int(b.get("max_tokens") or 4096))),
         "temperature": min(2.0, max(0.0, float(b.get("temperature") or 0.3))),
+        "reasoning_effort": effort,
         "enabled": 1 if b.get("enabled") else 0,
         "api_key": (b.get("api_key") or "").strip() or (old or {}).get("api_key") or "",
     }

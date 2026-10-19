@@ -103,6 +103,8 @@ def stream_chat(scene: str, question: str, context_pack: str, history: list):
         "max_tokens": int(cfg.get("max_tokens") or 4096),
         "temperature": float(cfg.get("temperature") or 0.3),
         "stream": True,
+        # V1.8.1 性能：low=不思考直答（正文 0.8s 起流）high=深度思考（复杂分析，正文延迟 20s+）
+        "reasoning_effort": cfg.get("reasoning_effort") or "low",
     }).encode()
     req = urllib.request.Request(cfg["base_url"].rstrip("/") + "/chat/completions",
                                  data=payload, method="POST")
