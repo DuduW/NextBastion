@@ -4,8 +4,8 @@
 (function(){
   const NS='nb-ai';
   const CSS=`
-  .${NS}{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--card,#11161d);border-left:1px solid var(--border,#232b36);font-family:var(--mono,Consolas,monospace)}
-  .${NS}-head{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border,#232b36)}
+  .${NS}{display:flex;flex-direction:column;height:100%;min-height:0;background:#11161d;color:#d4d4d4;border-left:1px solid #232b36;font-family:var(--mono,Consolas,monospace)}
+  .${NS}-head{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #232b36}
   .${NS}-resizer{position:absolute;left:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:10;transition:background .15s}
   .${NS}-resizer:hover,.${NS}-resizer.on{background:rgba(78,201,176,.35)}
   .${NS}-head b{color:#4ec9b0;font-size:13px}
@@ -22,11 +22,11 @@
   .${NS}-quick{display:flex;gap:6px;padding:8px 12px 4px;flex-wrap:wrap}
   .${NS}-qb{background:#1f2b38;border:1px solid #232b36;color:#9cdcfe;border-radius:7px;padding:3px 10px;font-size:11px;cursor:pointer}
   .${NS}-qb:hover{border-color:#4ec9b0;color:#4ec9b0}
-  .${NS}-input{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--border,#232b36)}
+  .${NS}-input{display:flex;gap:8px;padding:10px 12px;border-top:1px solid #232b36}
   .${NS}-input input{flex:1;background:#0b0f14;border:1px solid #232b36;border-radius:8px;padding:8px 10px;color:#d4d4d4;font-size:12px;font-family:inherit}
   .${NS}-input input:focus{outline:none;border-color:#4ec9b0}
   .${NS}-send{background:#4ec9b0;color:#06231b;border:none;border-radius:8px;padding:6px 14px;font-weight:700;cursor:pointer;font-size:12px}
-  .${NS}-privacy{font-size:10.5px;color:#8a9199;padding:6px 14px;border-top:1px solid var(--border,#232b36)}
+  .${NS}-privacy{font-size:10.5px;color:#8a9199;padding:6px 14px;border-top:1px solid #232b36}
   .${NS}-guide{text-align:center;padding:36px 18px;color:#8a9199}
   .${NS}-typing::after{content:'▋';animation:${NS}-b 1s steps(1) infinite;color:#4ec9b0}
   @keyframes ${NS}-b{50%{opacity:0}}
