@@ -2315,6 +2315,28 @@ import ai_proxy
 from fastapi.responses import StreamingResponse
 
 
+_SENTINEL = object()
+
+
+def _next_chunk(it):
+    """线程池安全的 next：StopIteration 转哨兵（StopIteration 不能进 Future）"""
+    try:
+        return next(it)
+    except StopIteration:
+        return _SENTINEL
+
+
+async def _stream_async(*args):
+    """同步 stream_chat → 异步迭代（线程池，避免阻塞事件循环）"""
+    loop = asyncio.get_event_loop()
+    it = ai_proxy.stream_chat(*args)
+    while True:
+        chunk = await loop.run_in_executor(None, _next_chunk, it)
+        if chunk is _SENTINEL:
+            break
+        yield chunk
+
+
 @app.post("/api/v1/ai/chat")
 async def ai_chat(request: Request, p=Depends(auth)):
     """SSE 流式对话。body: {scene, question, handle:{fsid?, selection?, schema_hint?}, history:[]}
@@ -2335,22 +2357,30 @@ async def ai_chat(request: Request, p=Depends(auth)):
     user = utils.query("SELECT id, username FROM users WHERE id=%s", (p["sub"],), one=True) or {}
     context_pack = ai_proxy.build_context_pack(scene, handle, user)
     effort = b.get("effort") if b.get("effort") in ("low", "high") else None   # 会话级覆盖（V1.8.1）
+    quick = bool(b.get("quick"))   # V1.9 P4：快捷动作（限输出长度）
 
     async def gen():
         answer_len = 0
+        ttft = None
+        cached = False
         try:
-            for chunk in ai_proxy.stream_chat(scene, question, context_pack, b.get("history") or [], effort):
+            async for chunk in _stream_async(scene, question, context_pack, b.get("history") or [], effort, quick):
                 answer_len += len(chunk.get("delta", ""))
+                if chunk.get("ttft") and ttft is None:
+                    ttft = chunk["ttft"]
+                if chunk.get("cached"):
+                    cached = True
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': f'AI 服务异常: {str(e)[:80]}'}, ensure_ascii=False)}\n\n"
         finally:
+            # V1.9 P7 埋点：ttft/cached 进审计
             try:
                 utils.execute(
                     "INSERT INTO command_logs (session_id,user_id,asset_id,command_text,matched_rule,action,risk_level) "
                     "VALUES (%s,%s,%s,%s,'ai','ai_query','low')",
                     (handle.get("fsid") or "-", p["sub"], 0,
-                     f"[AI/{scene}] {question[:300]} → {answer_len}字", ))
+                     f"[AI/{scene}] {question[:200]} → {answer_len}字 ttft={ttft}{' cached' if cached else ''}", ))
             except Exception:
                 pass
 

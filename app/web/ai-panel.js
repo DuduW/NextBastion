@@ -28,7 +28,8 @@
   .${NS}-send{background:#4ec9b0;color:#06231b;border:none;border-radius:8px;padding:6px 14px;font-weight:700;cursor:pointer;font-size:12px}
   .${NS}-privacy{font-size:10.5px;color:#8a9199;padding:6px 14px;border-top:1px solid #232b36}
   .${NS}-guide{text-align:center;padding:36px 18px;color:#8a9199}
-  .${NS}-typing::after{content:'▋';animation:${NS}-b 1s steps(1) infinite;color:#4ec9b0}
+  .${NS}-typing::after{content:'…';display:inline-block;width:1.2em;animation:${NS}-dots 1.2s steps(4) infinite;color:#4ec9b0;overflow:hidden;vertical-align:bottom}
+  @keyframes ${NS}-dots{0%{width:0}25%{width:.35em}50%{width:.75em}75%{width:1.1em}}
   @keyframes ${NS}-b{50%{opacity:0}}
   `;
   function injectCSS(){if(document.getElementById(NS+'-css'))return;const s=document.createElement('style');s.id=NS+'-css';s.textContent=CSS;document.head.appendChild(s);}
@@ -63,7 +64,7 @@
     syncEffort();quick.appendChild(eb);
     (opts.quickActions||[]).forEach(a=>{
       const b=document.createElement('span');b.className=NS+'-qb';b.textContent=a.label;
-      b.onclick=()=>ask(a.question);quick.appendChild(b);
+      b.onclick=()=>{window.__aiQuick=true;ask(a.question);window.__aiQuick=false;};quick.appendChild(b);
     });
 
     function renderCtx(){
@@ -85,16 +86,18 @@
       out=out.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
       return out;
     }
-    let busy=false;
+    let busy=false,aborter=null;
     async function ask(q){
       if(busy||!q)return;busy=true;renderCtx();
+      aborter=new AbortController();
       bubble(NS+'-bu',esc(q));
       const isHigh=(localStorage.getItem('nb_ai_effort')==='high');
     const ai=bubble(NS+'-ba',`<span class="${NS}-think-title">${isHigh?'🧠':'✨'} ${isHigh?'深度思考中…（思考过程见下方，正文随后）':'分析中…'}</span><span class="${NS}-typing"></span>`);
       const handle=opts.getHandle?opts.getHandle():{};
       try{
         const r=await fetch('/api/v1/ai/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+opts.token()},
-          body:JSON.stringify({scene,question:q,handle,history:history.slice(-6),effort:localStorage.getItem('nb_ai_effort')||'low'})});
+          signal:aborter.signal,
+          body:JSON.stringify({scene,question:q,handle,history:history.slice(-6),effort:localStorage.getItem('nb_ai_effort')||'low',quick:!!window.__aiQuick})});
         if(!r.ok){const e=await r.json().catch(()=>({}));ai.innerHTML='❌ '+(e.detail||('HTTP '+r.status));return}
         const reader=r.body.getReader(),dec=new TextDecoder();
         let ans='',think='',buf='';
@@ -112,7 +115,7 @@
         }
         if(!ans)ai.innerHTML=(think?`<div class="${NS}-think">${esc(think.slice(-600))}</div>`:'')+'（模型未返回内容）';
         history.push({role:'user',content:q});if(ans)history.push({role:'assistant',content:ans});
-      }catch(e){ai.innerHTML='❌ 网络错误：'+esc(e.message)}
+      }catch(e){if(e.name==='AbortError'){ai.innerHTML='<span style="color:#8a9199">（已中断）</span>'}else{ai.innerHTML='❌ 网络错误：'+esc(e.message)}}
       busy=false;
     }
     // 拖拽调宽（含网格宿主页适配）+ 记忆
@@ -175,6 +178,7 @@
     const stateKey='nb_ai_collapsed';
     let collapsed=localStorage.getItem(stateKey)==='1';
     const setCollapsed=c=>{
+      if(c&&aborter){try{aborter.abort()}catch(e){}}
       collapsed=c;localStorage.setItem(stateKey,c?'1':'0');
       root.querySelectorAll('.'+NS+'-ctx,.'+NS+'-body,.'+NS+'-quick,.'+NS+'-input,.'+NS+'-privacy').forEach(el=>el.style.display=c?'none':'');
       colBtn.textContent=c?'⟨':'⟩';colBtn.title=c?'展开面板':'收起面板';
@@ -185,7 +189,7 @@
     };
     colBtn.onclick=()=>setCollapsed(!collapsed);
     if(collapsed)setCollapsed(true);
-    root.querySelector('[data-send]').onclick=()=>{ask(inp.value.trim());inp.value=''};
+    root.querySelector('[data-send]').onclick=()=>{window.__aiQuick=false;ask(inp.value.trim());inp.value=''};
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){ask(inp.value.trim());inp.value=''}});
     if(opts.onReady)opts.onReady({ask});
     return {ask,setScene:s=>{opts.scene=s}};
