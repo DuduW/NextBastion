@@ -169,7 +169,7 @@ def render_sql_frame(sql_text: str, result: dict = None, error: str = None) -> s
 
 
 def open_sql_session(user: dict, asset: dict, account: dict, read_only: bool,
-                     cast_dir: str = None) -> str:
+                     cast_dir: str = None, session_name: str = None) -> str:
     secret = utils.decrypt_secret(account["secret_encrypted"])
     conn = pymysql.connect(
         host=asset["ip"], port=asset.get("sql_port") or asset.get("ssh_port") or 3306,
@@ -185,7 +185,8 @@ def open_sql_session(user: dict, asset: dict, account: dict, read_only: bool,
                           "account": account, "read_only": read_only,
                           "ts": time.time(), "session_id": None}
     if cast_dir:
-        _cast_open(SQL_SESSIONS[fsid], fsid, cast_dir)
+        # V1.8.1：cast 以 sessions.sid 命名（session_name）——回放按 sid 寻址一致
+        _cast_open(SQL_SESSIONS[fsid], session_name or fsid, cast_dir)
     return fsid
 
 

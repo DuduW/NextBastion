@@ -2394,10 +2394,12 @@ async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
         raise HTTPException(403, "策略未开启数据库访问能力")
     rw_level = _sql_rw_level(user, asset_id, acc['username'])
     read_only = rw_level <= 1
+    # V1.8.1 修复：先定 sid 再开会话——cast 直接以 sid 命名（原按 fsid 命名与 sessions 行不一致致回放 404）
+    sid = utils.new_session_id()
     cast_dir = utils.record_subdir(RECORD_DIR, user['username'])
     try:
         fsid = await asyncio.to_thread(
-            sqlgw.open_sql_session, user, asset, acc, read_only, cast_dir)
+            sqlgw.open_sql_session, user, asset, acc, read_only, cast_dir, sid)
         sqlgw.SQL_SESSIONS[fsid]["rw_level"] = rw_level
     except PermissionError:
         raise HTTPException(403, "数据库凭据或连接失败")
@@ -2409,8 +2411,7 @@ async def sql_session_open(asset_id: int, account_id: int, p=Depends(auth)):
         sqlgw.SQL_SESSIONS[fsid]["rules"] = json.loads(rf["rules"]) if rf and rf.get("rules") else []
     except Exception:
         sqlgw.SQL_SESSIONS[fsid]["rules"] = []
-    # 审计会话（复用 sessions 表，protocol='sql'，带 cast 录像路径 → 在线监视/回放可用）
-    sid = utils.new_session_id()
+    # 审计会话（cast 已按 sid 命名，回放/监视路径一致）
     utils.execute(
         "INSERT INTO sessions (id, user_id, asset_id, account_name, protocol, status, started_at, client_ip, cast_file_path) "
         "VALUES (%s,%s,%s,%s,'sql','active',NOW(),%s,%s)",
