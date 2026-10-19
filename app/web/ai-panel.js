@@ -42,10 +42,10 @@
     const WKEY='nb_ai_width';
     const saved=+(localStorage.getItem(WKEY)||340);
     const applyW=w=>{root.style.width=w+'px';root.style.maxWidth=w+'px';root.style.flexBasis=w+'px';root.style.minWidth='0';};
-    applyW(Math.min(620,Math.max(280,saved)));
+    applyW(Math.min(Math.floor(window.innerWidth*0.85),Math.max(280,saved)));
     root.innerHTML=`<div class="${NS}" style="height:100%;position:relative">
       <div class="${NS}-resizer" title="拖拽调整宽度"></div>
-      <div class="${NS}-head"><span style="font-size:15px">✨</span><b>AI 辅助分析</b><span style="flex:1"></span><span style="flex:1"></span><span data-collapse style="font-size:16px;color:#8a9199;cursor:pointer;padding:0 4px" title="收起面板">⟩</span></div>
+      <div class="${NS}-head"><span style="font-size:15px">✨</span><b>AI 辅助分析</b><span style="flex:1"></span><span style="flex:1"></span><span data-expand style="font-size:14px;color:#8a9199;cursor:pointer;padding:0 4px" title="放大为大窗口">⤢</span><span data-collapse style="font-size:16px;color:#8a9199;cursor:pointer;padding:0 4px" title="收起面板">⟩</span></div>
       <div class="${NS}-ctx">上下文：<span data-ctx>自动采集</span></div>
       <div class="${NS}-body" data-body></div>
       <div class="${NS}-quick" data-quick></div>
@@ -126,14 +126,44 @@
     rz.addEventListener('dblclick',()=>{applyW(340);syncHost(340);localStorage.setItem(WKEY,'340')});
     window.addEventListener('mousemove',e=>{
       if(!dragging)return;
-      const w=Math.min(620,Math.max(280,window.innerWidth-e.clientX));
-      applyW(w);syncHost(w);
+      let w;
+      if(expanded){  // 大窗模式：以鼠标为左缘，宽度 = 右缘(屏宽-5%) - 左缘
+        w=Math.min(Math.floor(window.innerWidth*0.95),Math.max(400,window.innerWidth*0.95-e.clientX));
+        root.style.width=w+'px';root.style.maxWidth=w+'px';
+      }else{
+        w=Math.min(Math.floor(window.innerWidth*0.85),Math.max(280,window.innerWidth-e.clientX));
+        applyW(w);syncHost(w);
+      }
     });
     window.addEventListener('mouseup',()=>{
       if(!dragging)return;
       dragging=false;rz.classList.remove('on');document.body.style.cursor='';
-      localStorage.setItem(WKEY,String(parseInt(root.style.width)||340));
+      if(!expanded)localStorage.setItem(WKEY,String(parseInt(root.style.width)||340));
     });
+    // 大窗模式：面板浮出为居中大窗口（可继续拖宽），⤢/ESC 还原
+    let expanded=false;
+    const expBtn=root.querySelector('[data-expand]');
+    const panel=root.querySelector('.'+NS);
+    const setExpanded=v=>{
+      expanded=v;
+      if(v){
+        root.dataset.hostRight=root.style.right||'';
+        Object.assign(root.style,{position:'fixed',left:'50%',top:'4vh',transform:'translateX(-50%)',
+          width:'85vw',maxWidth:'85vw',height:'92vh',zIndex:'9999',
+          boxShadow:'0 18px 60px rgba(0,0,0,.5)',borderRadius:'16px'});
+        expBtn.textContent='⤡';expBtn.title='还原为侧栏';
+        document.body.style.overflow='hidden';
+      }else{
+        Object.assign(root.style,{position:'',left:'',top:'',transform:'',height:'100%',zIndex:'',
+          boxShadow:'',borderRadius:''});
+        applyW(parseInt(localStorage.getItem(WKEY))||340);syncHost(parseInt(localStorage.getItem(WKEY))||340);
+        expBtn.textContent='⤢';expBtn.title='放大为大窗口';
+        document.body.style.overflow='';
+      }
+    };
+    expBtn.onclick=()=>setExpanded(!expanded);
+    window.addEventListener('keydown',e=>{if(e.key==='Escape'&&expanded)setExpanded(false)});
+
     // 折叠/展开（收起后左侧留 ⟪ 竖条）
     const colBtn=root.querySelector('[data-collapse]');
     const stateKey='nb_ai_collapsed';
