@@ -1997,7 +1997,8 @@ if(TOKEN&&USER){
 function toggleAIPanel(){
   const f=document.getElementById('ai-float');
   const open=f.style.right==='16px';
-  f.style.right=open?'-360px':'16px';
+  if(open){f.style.right='-400px'}
+  else{f.style.right='16px';const w=+(localStorage.getItem('nb_ai_width')||340);f.style.width=w+'px'}
 }
 window.addEventListener('DOMContentLoaded',()=>{
   if(!window.NB_AI)return;

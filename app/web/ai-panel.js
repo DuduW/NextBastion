@@ -6,6 +6,8 @@
   const CSS=`
   .${NS}{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--card,#11161d);border-left:1px solid var(--border,#232b36);font-family:var(--mono,Consolas,monospace)}
   .${NS}-head{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border,#232b36)}
+  .${NS}-resizer{position:absolute;left:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:10;transition:background .15s}
+  .${NS}-resizer:hover,.${NS}-resizer.on{background:rgba(78,201,176,.35)}
   .${NS}-head b{color:#4ec9b0;font-size:13px}
   .${NS}-ctx{padding:6px 14px;font-size:11px;color:#8a9199;border-bottom:1px solid var(--border,#232b36);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .${NS}-chip{background:#1f2b38;border:1px solid #232b36;border-radius:6px;padding:1px 8px;color:#9cdcfe}
@@ -36,8 +38,14 @@
     const root=typeof el==='string'?document.getElementById(el):el;
     if(!root)return;
     const scene=opts.scene; const history=[];
-    root.innerHTML=`<div class="${NS}">
-      <div class="${NS}-head"><span style="font-size:15px">✨</span><b>AI 辅助分析</b><span style="flex:1"></span><span style="font-size:11px;color:#8a9199;cursor:pointer" onclick="this.closest('.${NS}-wrap').style.display='none'">⟨ 收起</span></div>
+    root.style.position=root.style.position||'relative';
+    const WKEY='nb_ai_width';
+    const saved=+(localStorage.getItem(WKEY)||340);
+    const applyW=w=>{root.style.width=w+'px';root.style.maxWidth=w+'px';root.style.flexBasis=w+'px';root.style.minWidth='0';};
+    applyW(Math.min(620,Math.max(280,saved)));
+    root.innerHTML=`<div class="${NS}" style="height:100%;position:relative">
+      <div class="${NS}-resizer" title="拖拽调整宽度"></div>
+      <div class="${NS}-head"><span style="font-size:15px">✨</span><b>AI 辅助分析</b><span style="flex:1"></span><span style="flex:1"></span><span data-collapse style="font-size:16px;color:#8a9199;cursor:pointer;padding:0 4px" title="收起面板">⟩</span></div>
       <div class="${NS}-ctx">上下文：<span data-ctx>自动采集</span></div>
       <div class="${NS}-body" data-body></div>
       <div class="${NS}-quick" data-quick></div>
@@ -99,6 +107,48 @@
       }catch(e){ai.innerHTML='❌ 网络错误：'+esc(e.message)}
       busy=false;
     }
+    // 拖拽调宽（含网格宿主页适配）+ 记忆
+    const rz=root.querySelector('.'+NS+'-resizer');
+    let dragging=false;
+    const host=()=>root.parentElement;
+    const syncHost=w=>{
+      const h=host();if(!h)return;
+      // 宿主为 grid 时同步最后一列宽
+      if(getComputedStyle(h).display==='grid'){
+        const cols=getComputedStyle(h).gridTemplateColumns.split(' ');
+        cols[cols.length-1]=w+'px';
+        h.style.gridTemplateColumns=cols.join(' ');
+      }
+      // 宿主为 ai-float（fixed 定位）时同步 width
+      if(h&&h.id==='ai-float'){h.style.width=w+'px';h.style.right='16px';}
+    };
+    rz.addEventListener('mousedown',e=>{dragging=true;rz.classList.add('on');document.body.style.cursor='col-resize';e.preventDefault()});
+    rz.addEventListener('dblclick',()=>{applyW(340);syncHost(340);localStorage.setItem(WKEY,'340')});
+    window.addEventListener('mousemove',e=>{
+      if(!dragging)return;
+      const w=Math.min(620,Math.max(280,window.innerWidth-e.clientX));
+      applyW(w);syncHost(w);
+    });
+    window.addEventListener('mouseup',()=>{
+      if(!dragging)return;
+      dragging=false;rz.classList.remove('on');document.body.style.cursor='';
+      localStorage.setItem(WKEY,String(parseInt(root.style.width)||340));
+    });
+    // 折叠/展开（收起后左侧留 ⟪ 竖条）
+    const colBtn=root.querySelector('[data-collapse]');
+    const stateKey='nb_ai_collapsed';
+    let collapsed=localStorage.getItem(stateKey)==='1';
+    const setCollapsed=c=>{
+      collapsed=c;localStorage.setItem(stateKey,c?'1':'0');
+      root.querySelectorAll('.'+NS+'-ctx,.'+NS+'-body,.'+NS+'-quick,.'+NS+'-input,.'+NS+'-privacy').forEach(el=>el.style.display=c?'none':'');
+      colBtn.textContent=c?'⟨':'⟩';colBtn.title=c?'展开面板':'收起面板';
+      const w=c?34:(parseInt(localStorage.getItem(WKEY))||340);
+      applyW(w);syncHost(w);
+      if(c){root.querySelector('.'+NS+'-head').style.padding='10px 4px';root.querySelector('.'+NS+'-head b').style.display='none';root.querySelector('.'+NS+'-head span[style*="15px"]').style.display='none'}
+      else{root.querySelector('.'+NS+'-head').style.padding='';root.querySelector('.'+NS+'-head b').style.display='';root.querySelector('.'+NS+'-head span[style*="15px"]').style.display=''}
+    };
+    colBtn.onclick=()=>setCollapsed(!collapsed);
+    if(collapsed)setCollapsed(true);
     root.querySelector('[data-send]').onclick=()=>{ask(inp.value.trim());inp.value=''};
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){ask(inp.value.trim());inp.value=''}});
     if(opts.onReady)opts.onReady({ask});
