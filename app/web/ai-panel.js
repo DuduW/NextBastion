@@ -32,7 +32,7 @@
   @keyframes ${NS}-b{50%{opacity:0}}
   `;
   function injectCSS(){if(document.getElementById(NS+'-css'))return;const s=document.createElement('style');s.id=NS+'-css';s.textContent=CSS;document.head.appendChild(s);}
-  const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
   function mount(el,opts){
     injectCSS();

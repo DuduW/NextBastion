@@ -195,7 +195,7 @@ async function api(path, opts={}){
 }
 const badge=(t,c)=>`<span class="badge badge-${c}">${t}</span>`;
 const protoBadge=p=>p==='rdp'?badge('RDP','blue'):p==='sql'?badge('SQL','purple'):badge('SSH','green');
-const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 const fmtSize=n=>{if(n==null)return '-';if(n<1024)return n+'B';const u=['KB','MB','GB'];let i=-1;do{n/=1024;i++}while(n>=1024&&i<2);return n.toFixed(1)+u[i]};
 
 async function doLogin(){
@@ -328,10 +328,10 @@ async dashboard(){
   return `<div class="page-head"><div><h2>仪表盘</h2><div class="sub">系统运行概览</div></div>
     <button class="btn btn-ghost" onclick="loadPage()">刷新</button></div>
   <div class="stat-grid">
-    <div class="card stat"><div class="label">纳管资产</div><div class="value">${s.assets??'-'}</div></div>
-    <div class="card stat"><div class="label">在线会话</div><div class="value">${s.online_sessions??'-'}</div></div>
-    <div class="card stat"><div class="label">今日命令</div><div class="value">${s.today_commands??'-'}</div></div>
-    <div class="card stat"><div class="label">今日高危</div><div class="value ${s.high_risk_alerts>0?'alert':''}">${s.high_risk_alerts??'-'}</div></div>
+    <div class="card stat"><div class="label">纳管资产</div><div class="value">${s.assets||'-'}</div></div>
+    <div class="card stat"><div class="label">在线会话</div><div class="value">${s.online_sessions||'-'}</div></div>
+    <div class="card stat"><div class="label">今日命令</div><div class="value">${s.today_commands||'-'}</div></div>
+    <div class="card stat"><div class="label">今日高危</div><div class="value ${s.high_risk_alerts>0?'alert':''}">${s.high_risk_alerts||'-'}</div></div>
   </div>
   <div class="card" style="margin-top:14px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
@@ -822,7 +822,7 @@ function assetsProto(btn){
   assetsFilter();
 }
 function filterAssetsTable(tableSel,inputSel,cntSel,protoVar){
-  const q=(document.getElementById(inputSel)?.value||'').trim().toLowerCase();
+  const q=(((document.getElementById(inputSel))||{}).value||'').trim().toLowerCase();
   const proto=window[protoVar];
   // 分页状态（按表独立）
   const pgKey='__pg_'+tableSel, szKey='__sz_'+tableSel;
@@ -870,7 +870,7 @@ function nodeForm(nid,mode){
   let banned=new Set();
   if(isEdit&&cur){const stack=[cur.id];while(stack.length){const id=stack.pop();banned.add(id);rows.filter(n=>n.parent_id===id).forEach(n=>stack.push(n.id))}}
   const opts=rows.filter(n=>!banned.has(n.id))
-    .map(n=>{let d=0,p=n.parent_id;while(p!=null&&d<9){d++;p=(rows.find(x=>x.id===p)||{}).parent_id??null}
+    .map(n=>{let d=0,p=n.parent_id;while(p!=null&&d<9){d++;p=(rows.find(x=>x.id===p)||{}).parent_id||null}
       return `<option value="${n.id}" ${defParent===n.id?'selected':''}>${'　'.repeat(d)}${esc(n.name)}</option>`}).join('');
   const title=isEdit?`编辑节点${cur?'：'+esc(cur.name):''}`:(nid?`新建子节点（父：${cur?esc(cur.name):''}）`:'新建根级节点');
   openModal(`
@@ -936,7 +936,7 @@ async function pickLdapGroup(role){
   }catch(e){toast(e.message||'拉取失败')}
 }
 async function saveRoleSettings(){
-  const default_role=document.getElementById('def-role')?.value||'user';
+  const default_role=((document.getElementById('def-role'))||{}).value||'user';
   try{
     await api('/role-settings',{method:'PUT',body:JSON.stringify({default_role})});
     toast('已保存');
@@ -1054,7 +1054,7 @@ async function assetForm(id){
     const dbLabels=((window.__fieldOptions||{}).label||[]).map(x=>x.value);
     window.__allLabels=[...new Set([...all.flatMap(x=>parseLabels(x.labels)),...dbLabels])];}catch(e){}
   const nodeOpts=nodes.map(n=>`<option value="${n.id}">${esc(n.name)}</option>`).join('');
-  let a={hostname:'',ip:'',os_type:'Linux',protocol:'ssh',ssh_port:22,rdp_port:3389,node_id:nodes[0]?.id||1,account:'root',labels_arr:[]};
+  let a={hostname:'',ip:'',os_type:'Linux',protocol:'ssh',ssh_port:22,rdp_port:3389,node_id:((nodes[0])||{}).id||1,account:'root',labels_arr:[]};
   let title='新建资产';
   if(id){
     const rows=await api('/assets');a=rows.find(x=>x.id===id)||a;a.labels_arr=parseLabels(a.labels);title='编辑资产 · '+a.hostname;
@@ -1146,12 +1146,12 @@ async function saveAsset(id){
     ssh_port:+document.getElementById('m-sshport').value||22,
     rdp_port:+document.getElementById('m-rdpport').value||3389,
     node_id:+document.getElementById('m-node').value,
-    labels:document.getElementById('m-labels')?.value||'',
+    labels:((document.getElementById('m-labels'))||{}).value||'',
     account:document.getElementById('m-account').value.trim(),
     password:document.getElementById('m-password').value||undefined,
-    device_type:document.getElementById('m-devtype')?.value||'linux',
+    device_type:((document.getElementById('m-devtype'))||{}).value||'linux',
     extra_nodes:[...(window.__extraSel||[])],
-    enable_password:document.getElementById('m-enablepw')?.value||undefined
+    enable_password:((document.getElementById('m-enablepw'))||{}).value||undefined
   };
   if(!body.hostname||!body.ip){toast('主机名与 IP 必填');return}
   try{
@@ -1231,8 +1231,8 @@ async function policyForm(id){
   const [users,groups,assets,nodes,filters]=await Promise.all([
     api('/users'),api('/users/groups'),api('/assets'),api('/nodes'),api('/filters')]);
   window.__policyCtx={users,groups,assets,nodes,filters};
-  let p={name:'',user_type:'group',user_id:groups[0]?.id,asset_type:'node',asset_id:nodes[1]?.id||nodes[0]?.id,
-         account_pattern:'*',command_filter_id:filters[0]?.id||1,valid_until:'',rdp:{clipboard:false,drive:false,watermark:true,sftp:false}};
+  let p={name:'',user_type:'group',user_id:((groups[0])||{}).id,asset_type:'node',asset_id:((nodes[1])||{}).id||((nodes[0])||{}).id,
+         account_pattern:'*',command_filter_id:((filters[0])||{}).id||1,valid_until:'',rdp:{clipboard:false,drive:false,watermark:true,sftp:false}};
   let title='新建授权策略';
   if(id){
     const rows=await api('/policies');const old=rows.find(x=>x.id===id);
@@ -1353,7 +1353,7 @@ async function saveUser(id){
       role:document.getElementById('um-role').value,
       password:document.getElementById('um-pass').value||undefined,
       is_mfa_enabled:document.getElementById('um-mfa').checked,
-      reset_totp:document.getElementById('um-rtotp')?.checked||false
+      reset_totp:((document.getElementById('um-rtotp'))||{}).checked||false
     };
     try{
       const d=await api('/users/'+id,{method:'PUT',body:JSON.stringify(body)});
@@ -1641,7 +1641,7 @@ async function loadAIModel(){
     document.getElementById('ai-baseurl').value=c.base_url||'';
     document.getElementById('ai-model').value=c.model||'';
     document.getElementById('ai-maxtok').value=c.max_tokens||4096;
-    document.getElementById('ai-temp').value=c.temperature??0.3;
+    document.getElementById('ai-temp').value=c.temperature||0.3;
     if(c.has_api_key)document.getElementById('ai-apikey').placeholder='已配置（'+c.api_key_masked+'）· 留空保留';
     document.getElementById('ai-effort').value=c.reasoning_effort||'low';
   }catch(e){}
@@ -1654,7 +1654,7 @@ async function saveAIModel(){
     model:document.getElementById('ai-model').value.trim(),
     max_tokens:+document.getElementById('ai-maxtok').value||4096,
     temperature:+document.getElementById('ai-temp').value||0.3,
-    reasoning_effort:document.getElementById('ai-effort')?.value||'low'
+    reasoning_effort:((document.getElementById('ai-effort'))||{}).value||'low'
   };
   try{
     await api('/settings/ai-model',{method:'POST',body:JSON.stringify(body)});

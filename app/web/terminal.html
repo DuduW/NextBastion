@@ -35,7 +35,7 @@ try{if(localStorage.getItem('nb_theme')==='dark')document.body.classList.add('da
     try{
       const a=await fetch('/api/v1/assets',{headers:{'Authorization':'Bearer '+TOKEN}}).then(r=>r.json());
       const me=(a.data||[]).find(x=>x.id===+ASSET);
-      const dt=me?.device_type||'linux';
+      const dt=(me&&me.device_type)||'linux';
       window.__aiScene=['huawei','h3c','cisco','ruijie','juniper'].includes(dt)?'netdev':'ssh_linux';
     }catch(e){}
 })();
@@ -46,7 +46,7 @@ setTimeout(()=>{
     token:()=>TOKEN,
     getHandle:()=>{
       const buf=(window.__termBuf||'').split('\n').slice(-200).join('\n');
-      return {asset:document.getElementById('info')?.textContent||'',selection:buf.slice(0,4000)};
+      return {asset:((document.getElementById('info'))||{}).textContent||'',selection:buf.slice(0,4000)};
     },
     quickActions:[
       {label:'🔍 解释最近输出',question:'请解释我终端最近的输出，指出关键信息与异常'},
