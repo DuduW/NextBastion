@@ -20,14 +20,44 @@
 </head>
 <body>
 <div class="bar"><span id="info">连接中...</span><span class="rec">REC</span><button class="btn-f" onclick="openFiles()">📁 文件</button><button class="btn-x" onclick="window.close()">断开</button></div>
+<div style="flex:1;display:grid;grid-template-columns:1fr 340px;min-height:0">
 <div id="term-wrap"></div>
+<div id="ai-wrap" style="min-height:0"></div>
+</div>
 <script src="vendor/xterm.js"></script>
 <script src="vendor/xterm-addon-fit.js"></script>
+<script src="/ai-panel.js"></script>
 <script>
 // 主题联动（与主界面同 localStorage）
 try{if(localStorage.getItem('nb_theme')==='dark')document.body.classList.add('dark')}catch(e){}
+// V1.8 AI 面板（延迟到 term 可用）
+(async()=>{
+    try{
+      const a=await fetch('/api/v1/assets',{headers:{'Authorization':'Bearer '+TOKEN}}).then(r=>r.json());
+      const me=(a.data||[]).find(x=>x.id===+ASSET);
+      const dt=me?.device_type||'linux';
+      window.__aiScene=['huawei','h3c','cisco','ruijie','juniper'].includes(dt)?'netdev':'ssh_linux';
+    }catch(e){}
+})();
+setTimeout(()=>{
+  if(!window.NB_AI)return;
+  window.__aiPanel=NB_AI.mount(document.getElementById('ai-wrap'),{
+    scene: window.__aiScene||'ssh_linux',
+    token:()=>TOKEN,
+    getHandle:()=>{
+      const buf=(window.__termBuf||'').split('\n').slice(-200).join('\n');
+      return {asset:document.getElementById('info')?.textContent||'',selection:buf.slice(0,4000)};
+    },
+    quickActions:[
+      {label:'🔍 解释最近输出',question:'请解释我终端最近的输出，指出关键信息与异常'},
+      {label:'🩺 故障排查建议',question:'基于我终端最近输出给出故障排查步骤与命令（仅建议）'},
+      {label:'📋 命令速查',question:'我想完成的操作该用什么命令？给出常用命令与参数说明'},
+    ]
+  });
+},600);
 
 const qs=new URLSearchParams(location.search);
+// V1.8 AI 面板：终端缓冲尾部 200 行 + 资产类型（Linux/网络设备）
 const TOKEN=qs.get('token'),ASSET=qs.get('asset'),ACCOUNT=qs.get('account'),USER=qs.get('user')||'';
 const term=new Terminal({
   cursorBlink:true, fontSize:14, fontFamily:'"JetBrains Mono","Cascadia Code",Consolas,"Noto Sans SC",monospace',
@@ -61,6 +91,9 @@ ws.onopen=()=>{ term.write('\x1b[90m通道已打开...\x1b[0m\r\n'); sendResize(
 ws.onmessage=e=>{
   // 忽略服务端控制帧（如有）
   term.write(e.data);
+  // V1.8 AI 上下文：终端缓冲（去 ANSI，截尾 8000）
+  try{window.__termBuf=(window.__termBuf||'')+String(e.data).replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'');
+      if(window.__termBuf.length>8000)window.__termBuf=window.__termBuf.slice(-8000);}catch(_){}
 };
 ws.onclose=e=>{
   const why=e.code===4401?'认证失败(token 无效)':e.code===4403?'五维授权未通过':e.code===4404?'资产或账号不存在':e.code===4500?'托管凭据解密失败':'会话结束';

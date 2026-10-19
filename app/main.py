@@ -2305,7 +2305,55 @@ async def account_scan_history(p=Depends(require_role('admin', 'auditor'))):
 import ldap_auth
 
 # ============================================================
-# 14. MySQL 远程接入（Web SQL 终端 · V1.4）
+# 14.5 AI 辅助分析（V1.8 · SSE 流式 + 脱敏 + 审计）
+# ============================================================
+import ai_proxy
+from fastapi.responses import StreamingResponse
+
+
+@app.post("/api/v1/ai/chat")
+async def ai_chat(request: Request, p=Depends(auth)):
+    """SSE 流式对话。body: {scene, question, handle:{fsid?, selection?, schema_hint?}, history:[]}
+    上下文包由后端按句柄组装（防前端伪造越权上下文）；发送前脱敏；全量审计。"""
+    b = await request.json()
+    scene = b.get("scene") or "ssh_linux"
+    if scene not in ai_proxy.SCENE_PROMPTS:
+        scene = "ssh_linux"
+    question = (b.get("question") or "").strip()[:4000]
+    if not question:
+        raise HTTPException(400, "问题不能为空")
+    handle = b.get("handle") or {}
+    # SQL 场景句柄校验：fsid 必须属于当前用户（防窥探他人会话语句）
+    if handle.get("fsid"):
+        s = sqlgw.SQL_SESSIONS.get(handle["fsid"])
+        if not s or s.get("user", {}).get("id") != p["sub"]:
+            handle.pop("fsid", None)
+    user = utils.query("SELECT id, username FROM users WHERE id=%s", (p["sub"],), one=True) or {}
+    context_pack = ai_proxy.build_context_pack(scene, handle, user)
+
+    async def gen():
+        answer_len = 0
+        try:
+            for chunk in ai_proxy.stream_chat(scene, question, context_pack, b.get("history") or []):
+                answer_len += len(chunk.get("delta", ""))
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': f'AI 服务异常: {str(e)[:80]}'}, ensure_ascii=False)}\n\n"
+        finally:
+            try:
+                utils.execute(
+                    "INSERT INTO command_logs (session_id,user_id,asset_id,command_text,matched_rule,action,risk_level) "
+                    "VALUES (%s,%s,%s,%s,'ai','ai_query','low')",
+                    (handle.get("fsid") or "-", p["sub"], 0,
+                     f"[AI/{scene}] {question[:300]} → {answer_len}字", ))
+            except Exception:
+                pass
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+# ============================================================
+# 15. MySQL 远程接入（Web SQL 终端 · V1.4）
 # ============================================================
 import sqlgw
 import netdev as netdev_mod

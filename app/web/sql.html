@@ -16,7 +16,7 @@ body{padding:10px}
 .ro{background:#12351f;color:#5ad07f;border-radius:6px;padding:1px 8px;font-size:11px}
 .rw{background:#3a2b10;color:var(--warn);border-radius:6px;padding:1px 8px;font-size:11px}
 .rec{color:#f48771}
-#layout{flex:1;display:grid;grid-template-columns:210px 1fr;min-height:0}
+#layout{flex:1;display:grid;grid-template-columns:210px 1fr 340px;min-height:0}
 #schema{border-right:1px solid var(--bd);overflow:auto;padding:12px;font-size:12.5px}
 #schema .db{color:var(--accent);cursor:pointer;padding:2px 0;user-select:none}
 #schema .db:before{content:'▸ ';opacity:.6}
@@ -70,7 +70,9 @@ tr:hover td{background:var(--pl)}
     <div id="result"><div class="msg info">输入 SQL 后按 Ctrl+Enter 执行 · 左侧库表可点击插入名称</div></div>
     <div id="hist"></div>
   </div>
+  <div id="ai-wrap" style="min-height:0"></div>
 </div>
+<script src="/ai-panel.js"></script>
 <script>
 const qs=new URLSearchParams(location.search);
 const TOKEN=qs.get('token')||sessionStorage.getItem('nb_token');
@@ -139,6 +141,18 @@ function exportCsv(){
   const blob=new Blob(["\ufeff"+rows.join('\n')],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='query-result.csv';a.click();
 }
+// V1.8 AI 面板
+window.__aiPanel=NB_AI.mount(document.getElementById('ai-wrap'),{
+  scene:'sql',
+  token:()=>TOKEN,
+  getHandle:()=>({fsid:window.FSID||null,asset:document.getElementById('h-asset')?.textContent||'',db:window.__curDb||'',selection:(window.getSelection().toString()||'').slice(0,500)}),
+  quickActions:[
+    {label:'🔍 解释选中/最近 SQL',question:'请解释我最近执行或选中的这条 SQL 的作用和潜在风险'},
+    {label:'🔧 优化建议',question:'请优化我最近执行或选中的 SQL：给出索引建议、改写方案与预估收益'},
+    {label:'📊 结果分析',question:'请分析我最近查询结果的数据特征与异常点'},
+    {label:'🩺 诊断报错',question:'我最近的 SQL 报错了，请诊断原因并给出修复语句'},
+  ]
+});
 document.getElementById('editor').addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();runSql()}
 });
