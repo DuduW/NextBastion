@@ -194,5 +194,24 @@
     if(opts.onReady)opts.onReady({ask});
     return {ask,setScene:s=>{opts.scene=s}};
   }
-  window.NB_AI={mount};
+  // V1.9.1 全局开关：关闭时不挂载面板，宿主页通过回调隐藏入口
+  async function mountIfEnabled(el,opts){
+    try{
+      // token 可能尚未初始化（宿主 boot 异步）——最多等 3s
+      let tk=null;
+      for(let i=0;i<30;i++){
+        tk=opts.token();
+        if(tk)break;
+        await new Promise(r=>setTimeout(r,100));
+      }
+      if(!tk){if(opts.onDisabled)opts.onDisabled();return null}
+      const st=await fetch('/api/v1/ai/enabled',{headers:{'Authorization':'Bearer '+tk}}).then(r=>r.json());
+      if(!(st&&st.data&&st.data.enabled)){
+        if(opts.onDisabled)opts.onDisabled();
+        return null;
+      }
+    }catch(e){/* 查询失败不阻塞——保持可用 */}
+    return mount(el,opts);
+  }
+  window.NB_AI={mount,mountIfEnabled};
 })();

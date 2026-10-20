@@ -145,9 +145,10 @@ function exportCsv(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='query-result.csv';a.click();
 }
 // V1.8 AI 面板
-window.__aiPanel=NB_AI.mount(document.getElementById('ai-wrap'),{
+NB_AI.mountIfEnabled(document.getElementById('ai-wrap'),{
   scene:'sql',
   token:()=>TOKEN,
+  onDisabled:()=>{const w=document.getElementById('ai-wrap');if(w){w.style.flexBasis='0px';w.style.border='none'}},
   getHandle:()=>({fsid:window.FSID||null,asset:((document.getElementById('h-asset'))||{}).textContent||'',db:window.__curDb||'',selection:(window.getSelection().toString()||'').slice(0,500)}),
   quickActions:[
     {label:'🔍 解释选中/最近 SQL',question:'请解释我最近执行或选中的这条 SQL 的作用和潜在风险'},

@@ -1868,6 +1868,13 @@ async def get_ai_model(p=Depends(require_role('admin'))):
     return utils.ok(_ai_config_row())
 
 
+@app.get("/api/v1/ai/enabled")
+async def ai_enabled(p=Depends(auth)):
+    """全局 AI 开关状态（所有登录用户可查——前端据此显示/隐藏 AI 面板）"""
+    cfg = _ai_config_row_raw()
+    return utils.ok({"enabled": bool(cfg.get("enabled"))})
+
+
 @app.post("/api/v1/settings/ai-model")
 async def set_ai_model(request: Request, p=Depends(require_role('admin'))):
     """{base_url, api_key?, model, max_tokens, temperature, enabled}

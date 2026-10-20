@@ -41,9 +41,10 @@ try{if(localStorage.getItem('nb_theme')==='dark')document.body.classList.add('da
 })();
 setTimeout(()=>{
   if(!window.NB_AI)return;
-  window.__aiPanel=NB_AI.mount(document.getElementById('ai-wrap'),{
+  NB_AI.mountIfEnabled(document.getElementById('ai-wrap'),{
     scene: window.__aiScene||'ssh_linux',
     token:()=>TOKEN,
+    onDisabled:()=>{const w=document.getElementById('ai-wrap');if(w){w.style.flexBasis='0px';w.style.border='none'}},
     getHandle:()=>{
       const buf=(window.__termBuf||'').split('\n').slice(-200).join('\n');
       return {asset:((document.getElementById('info'))||{}).textContent||'',selection:buf.slice(0,4000)};

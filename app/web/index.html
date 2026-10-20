@@ -2014,9 +2014,10 @@ function toggleAIPanel(){
 }
 window.addEventListener('DOMContentLoaded',()=>{
   if(!window.NB_AI)return;
-  window.__aiPanel=NB_AI.mount(document.getElementById('ai-wrap'),{
+  NB_AI.mountIfEnabled(document.getElementById('ai-wrap'),{
     scene:'dashboard',
     token:()=>TOKEN,
+    onDisabled:()=>{const f=document.getElementById('ai-fab');if(f)f.style.display='none'},
     getHandle:()=>({selection:(window.getSelection().toString()||'').slice(0,500)}),
     quickActions:[
       {label:'📋 安全日报',question:'请基于本堡垒机今日的运行情况生成安全日报框架，并说明你还缺哪些数据（我会粘贴）'},
@@ -2027,7 +2028,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   // 恢复上次开合状态（在组件 mount 完成初始 flexBasis 后覆盖；关闭则收 0）
   setTimeout(()=>{
     const w=document.getElementById('ai-wrap');
-    if((parseInt(localStorage.getItem('nb_ai_dash_open'))||0)===1){
+    if((parseInt(localStorage.getItem('nb_ai_dash_open'))||0)===1 && document.querySelector('.nb-ai')){
       w.style.flexBasis=(parseInt(localStorage.getItem('nb_ai_width'))||Math.floor(innerWidth*0.2))+'px';
     }else{
       w.style.flexBasis='0px';
