@@ -130,6 +130,7 @@
       <div class="nav-item active" data-page="dashboard" data-roles="admin,auditor,user"><span class="ic">📊</span>仪表盘</div>
       <div class="nav-group">运维接入</div>
       <div class="nav-item" data-page="myassets" data-roles="admin,auditor,user"><span class="ic">🖥️</span>我的资产</div>
+      <div class="nav-item" data-page="mytasks" data-roles="admin,auditor,user"><span class="ic">📋</span>我的任务</div>
       <div class="nav-group">管理</div>
       <div class="nav-item" data-page="assets" data-roles="admin"><span class="ic">🗂️</span>资产管理</div>
       <div class="nav-item" data-page="nodes" data-roles="admin"><span class="ic">🌲</span>节点管理</div>
@@ -346,13 +347,13 @@ async dashboard(){
 },
 async myassets(){
   const rows=await api('/my/assets');
-  const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b>${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
+  const tr=rows.map(a=>`<tr data-proto="${a.protocol}" data-search="${esc(((a.hostname||'')+' '+(a.ip||'')+' '+(a.os_type||'')+' '+(parseLabels(a.labels).join(' '))).toLowerCase())}"><td><b style="color:var(--primary);cursor:pointer" onclick="assetDataDrawer(${a.id},'${esc(a.hostname)}')">${esc(a.hostname)}</b></td><td class="mono">${esc(a.ip)}</td><td>${esc(a.os_type)}</td>
     <td>${devBadge(a.device_type)}</td>
     <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
     <td>${protoBadge(a.protocol)}</td><td>${esc(a.node_name)}</td>
     <td>${a.protocol==='rdp'
       ?`<button class="btn btn-sm btn-ghost" onclick="rdpConnect(${a.id})">RDP</button>`
-      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id},'${a.device_type||'linux'}')">连 接</button>`}</td></tr>`).join('');
+      :`<button class="btn btn-sm btn-primary" onclick="sshConnect(${a.id},'${a.device_type||'linux'}')">连 接</button>`} <button class="btn btn-sm btn-ghost" onclick="assetDataDrawer(${a.id},'${esc(a.hostname)}')">📊 数据</button></td></tr>`).join('');
   // 前端分页（与搜索/协议筛选联动）：当前页切片渲染
   setTimeout(()=>pagiAssetsTable('#my-assets-table','my-count','__myAssetsPg','__myAssetsSz',myAssetsFilter),0);
   return `<div class="page-head"><div><h2>我的资产</h2><div class="sub">五维授权过滤后的可见资产</div></div></div>
@@ -529,6 +530,26 @@ async filters(){
   return `<div class="page-head"><div><h2>高危命令规则</h2><div class="sub">规则集 × 策略绑定实现差异化管控（授权管理中可为每条策略选规则集）</div></div>
     <button class="btn btn-primary" onclick="filterForm()">+ 新建规则集</button></div>
   <div class="card">${rows.length?`<table><thead><tr><th>规则集</th><th>规则（动作·名称）</th><th>备注</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无规则集</div>'}</div>`;
+},
+
+async mytasks(){
+  let rows=[];
+  try{rows=await api('/tasks')}catch(e){}
+  const typeBadge=t=>t==='script'?badge('脚本','green'):t==='backup'?badge('备份','blue'):badge('巡检','orange');
+  const tr=rows.map(t=>`<tr>
+    <td><b>${esc(t.name)}</b></td>
+    <td>${typeBadge(t.type)}</td>
+    <td class="hint">${JSON.parse(t.asset_ids||'[]').length} 台资产</td>
+    <td class="mono">${esc(t.cron_expr)}</td>
+    <td>${t.last_status==='success'?badge('成功','green'):t.last_status==='partial'?badge('部分','orange'):t.last_status==='fail'?badge('失败','red'):t.last_status?'<span class="hint">-</span>':'<span class="hint">未执行</span>'} ${t.last_at?`<span class="hint">${esc(String(t.last_at).slice(5,16))}</span>`:''}</td>
+    <td><span class="switch" style="cursor:pointer" onclick="toggleTask(${t.id},${t.enabled?0:1})"><span class="sl ${t.enabled?'on':''}"></span></span></td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-sm btn-ghost" onclick="runTaskNow(${t.id},this)">▶ 执行</button>
+      <button class="btn btn-sm btn-ghost" onclick="delTask(${t.id},'${esc(t.name)}')">删除</button>
+    </td></tr>`).join('');
+  return `<div class="page-head"><div><h2>我的任务</h2><div class="sub">仅本人可见 · Linux 脚本 / 交换机备份 / 巡检（数据在 我的资产 → 主机名 查看）</div></div>
+    <button class="btn btn-primary" onclick="taskForm()">＋ 新建任务</button></div>
+  <div class="card">${rows.length?`<table><thead><tr><th>任务</th><th>类型</th><th>目标</th><th>Cron</th><th>上次执行</th><th>启用</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无任务 · 点击右上角新建</div>'}</div>`;
 },
 async settings(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
@@ -1646,6 +1667,128 @@ async function loadAIModel(){
     document.getElementById('ai-effort').value=c.reasoning_effort||'low';
   }catch(e){}
 }
+
+// ===== V2.0 任务管理 =====
+async function taskForm(){
+  const myAssets=await api('/my/assets');
+  openModal(`
+  <div class="modal-head"><b>新建任务</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    ${mRow('任务类型','<select id="tk-type" onchange="taskTypeSwitch()"><option value="script">📜 Linux 脚本任务</option><option value="backup">🔄 交换机配置备份</option><option value="inspect">🩺 交换机定时巡检</option></select>')}
+    ${mRow('任务名称 *','<input id="tk-name" placeholder="如 核心交换机每日备份">')}
+    ${mRow('目标资产（本人授权，多选）','<div class="m-check" id="tk-assets" style="max-height:130px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px">'+
+      (myAssets||[]).map(a=>`<label style="display:flex;gap:6px;align-items:center;padding:2px 0"><input type="checkbox" value="${a.id}"> ${esc(a.hostname)} <span class="hint mono">${esc(a.ip)}</span></label>`).join('')+'</div>')}
+    <div id="tk-script-row">${mRow('脚本内容（{{hostname}}/{{ip}} 变量）','<textarea id="tk-script" rows="5" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="df -h | tail -n +2 | awk \'$5+0>=90\'"></textarea>')}</div>
+    <div id="tk-th-row" style="display:none">${mRow('巡检阈值','<div style="display:flex;gap:8px"><input id="tk-cpu" type="number" value="80" style="width:100%" placeholder="CPU%"><input id="tk-mem" type="number" value="80" style="width:100%" placeholder="内存%"><input id="tk-temp" type="number" value="40" style="width:100%" placeholder="温度°C"></div>')}</div>
+    ${mRow('Cron 调度 *','<div style="display:flex;gap:8px"><select id="tk-cron-t" onchange="document.getElementById(\'tk-cron\').value=this.value"><option value="0 2 * * *">每天 02:00</option><option value="30 8 * * *">每天 08:30</option><option value="0 * * * *">每小时</option><option value="0 9 * * 1">每周一 09:00</option></select><input id="tk-cron" value="0 2 * * *" style="font-family:var(--mono)"></div>')}
+    ${mRow('告警时机','<select id="tk-notify"><option value="fail">失败时</option><option value="fail,change">失败 + 配置变更</option><option value="fail,change,alarm">失败 + 变更 + 巡检异常</option></select>')}
+  </div>
+  <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="saveTask()">创 建</button>
+    <button class="btn btn-ghost" onclick="saveTask(true)">创建并立即执行</button></div>`);
+}
+function taskTypeSwitch(){
+  const t=document.getElementById('tk-type').value;
+  document.getElementById('tk-script-row').style.display=t==='script'?'':'none';
+  document.getElementById('tk-th-row').style.display=t==='inspect'?'':'none';
+}
+async function saveTask(runNow){
+  const ids=[...document.querySelectorAll('#tk-assets input:checked')].map(x=>+x.value);
+  const type=document.getElementById('tk-type').value;
+  const body={name:document.getElementById('tk-name').value.trim(),type,asset_ids:ids,
+    script_text:document.getElementById('tk-script')?.value||null,
+    cron_expr:document.getElementById('tk-cron').value.trim(),
+    notify_on:document.getElementById('tk-notify').value};
+  if(type==='inspect'){
+    body.thresholds={cpu:+document.getElementById('tk-cpu').value||80,mem:+document.getElementById('tk-mem').value||80,temp:+document.getElementById('tk-temp').value||40};
+  }
+  try{
+    const r=await api('/tasks',{method:'POST',body:JSON.stringify(body)});
+    toast('任务已创建');closeModal();loadPage();
+    if(runNow){await api(`/tasks/${r.id}/run`,{method:'POST'});toast('已触发立即执行');}
+  }catch(e){toast('创建失败：'+e.message)}
+}
+async function toggleTask(id,en){try{await api(`/tasks/${id}`,{method:'PUT',body:JSON.stringify({enabled:!!en})});toast(en?'已启用':'已停用');loadPage()}catch(e){toast(e.message)}}
+async function runTaskNow(id,btn){btn.disabled=true;btn.textContent='⏳';try{await api(`/tasks/${id}/run`,{method:'POST'});toast('已触发执行 · 稍后在 我的资产 查看结果');setTimeout(loadPage,1500)}catch(e){toast('失败：'+e.message);btn.disabled=false;btn.textContent='▶ 执行'}}
+async function delTask(id,name){if(!confirm(`删除任务「${name}」？执行历史保留。`))return;try{await api(`/tasks/${id}`,{method:'DELETE'});toast('已删除');loadPage()}catch(e){toast(e.message)}}
+
+// ===== 资产数据抽屉（我的资产 → 主机名） =====
+async function assetDataDrawer(aid,hostname){
+  let ov={};
+  try{ov=await api(`/my/assets/${aid}/overview`)}catch(e){}
+  openModal(`
+  <div class="modal-head"><b>📊 ${esc(hostname)} · 数据状态</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn btn-sm btn-primary" id="ad-t0" onclick="adTab(0)">概览</button>
+      <button class="btn btn-sm btn-ghost" id="ad-t1" onclick="adTab(1)">📜 执行历史</button>
+      <button class="btn btn-sm btn-ghost" id="ad-t2" onclick="adTab(2)">🗄️ 配置备份</button>
+      <button class="btn btn-sm btn-ghost" id="ad-t3" onclick="adTab(3)">🩺 巡检报告</button>
+    </div>
+    <div id="ad-0">
+      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">关联任务</div><div class="value">${ov.tasks??'-'}</div></div>
+        <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">执行次数</div><div class="value">${ov.runs??'-'}</div></div>
+        <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">配置版本</div><div class="value">${ov.snapshots??'-'}</div></div>
+        <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">巡检异常次</div><div class="value">${ov.inspections_unhealthy??'-'}</div></div>
+      </div>
+      <div class="hint" style="margin-top:8px">${ov.last_run?`最近执行 ${esc(String(ov.last_run).slice(5,16))}`:'暂无执行记录'}${ov.last_snapshot?` · 最近备份 ${esc(String(ov.last_snapshot).slice(5,16))}`:''}</div>
+    </div>
+    <div id="ad-1" style="display:none"><div class="hint">加载中…</div></div>
+    <div id="ad-2" style="display:none"><div class="hint">加载中…</div></div>
+    <div id="ad-3" style="display:none"><div class="hint">加载中…</div></div>
+  </div>`);
+  window.__adAid=aid;
+  adLoadRuns();adLoadBackups();adLoadInspections();
+}
+function adTab(i){[0,1,2,3].forEach(x=>{const el=document.getElementById('ad-'+x);if(el)el.style.display=x===i?'':'none';
+  const b=document.getElementById('ad-t'+x);if(b){b.className='btn btn-sm '+(x===i?'btn-primary':'btn-ghost')}})}
+async function adLoadRuns(){
+  try{
+    const rows=await api(`/my/assets/${window.__adAid}/runs`);
+    const el=document.getElementById('ad-1');if(!el)return;
+    el.innerHTML=rows.length?`<table><thead><tr><th>时间</th><th>任务</th><th>状态</th><th>退出码</th><th>输出</th></tr></thead><tbody>`+
+      rows.map(r=>`<tr><td class="hint mono">${esc(String(r.started_at).slice(5,16))}</td><td>${esc(r.task_name)}</td>
+      <td>${r.status==='success'?badge('成功','green'):r.status==='skip'?badge('跳过','gray'):badge('失败','red')}</td>
+      <td class="mono">${r.exit_code??'-'}</td>
+      <td><details><summary class="hint">查看</summary><pre style="font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap">${esc((r.output||'').slice(0,3000))}</pre></details></td></tr>`).join('')+`</tbody></table>`:'<div class="empty">暂无执行记录</div>';
+  }catch(e){}
+}
+async function adLoadBackups(){
+  try{
+    const rows=await api(`/my/assets/${window.__adAid}/backups`);
+    const el=document.getElementById('ad-2');if(!el)return;
+    el.innerHTML=rows.length?`<table><thead><tr><th>版本</th><th>时间</th><th>大小</th><th>变更</th><th>操作</th></tr></thead><tbody>`+
+      rows.map(b=>`<tr><td class="mono">#${b.id}</td><td class="hint mono">${esc(String(b.created_at).slice(5,16))}</td>
+      <td class="hint">${(b.size/1024).toFixed(1)}KB</td>
+      <td>${b.changed?badge('有变更','orange'):badge('无','gray')}</td>
+      <td><button class="btn btn-sm btn-ghost" onclick="adDiff(${b.id})">对比上版</button>
+      <a class="btn btn-sm btn-ghost" style="text-decoration:none" href="/api/v1/my/assets/${window.__adAid}/backups/${b.id}/download?token=${TOKEN}" target="_blank">⬇ 下载</a></td></tr>`).join('')+`</tbody></table><div id="ad-diff" style="margin-top:10px"></div>`:'<div class="empty">暂无备份（需创建交换机备份任务）</div>';
+  }catch(e){}
+}
+async function adDiff(snapId){
+  try{
+    const d=await api(`/my/assets/${window.__adAid}/backups/${snapId}/diff`);
+    const el=document.getElementById('ad-diff');
+    const html=d.diff.split('\n').map(l=>l.startsWith('+')?`<div style="background:var(--badge-green-bg);color:var(--badge-green-tx);padding:1px 10px;font-family:var(--mono);font-size:11.5px">${esc(l)}</div>`:l.startsWith('-')?`<div style="background:var(--badge-red-bg);color:var(--badge-red-tx);padding:1px 10px;font-family:var(--mono);font-size:11.5px">${esc(l)}</div>`:`<div style="padding:1px 10px;font-family:var(--mono);font-size:11.5px;color:var(--text-3)">${esc(l)}</div>`).join('');
+    el.innerHTML=`<b style="font-size:12px">版本 #${d.id} 对比 ${d.prev_id?('#'+d.prev_id):'（首版基线）'}</b><div style="border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:320px">${html||'<div class="hint" style="padding:10px">无差异</div>'}</div>`;
+  }catch(e){toast('对比失败：'+e.message)}
+}
+async function adLoadInspections(){
+  try{
+    const rows=await api(`/my/assets/${window.__adAid}/inspections`);
+    const el=document.getElementById('ad-3');if(!el)return;
+    el.innerHTML=rows.length?rows.map(r=>{
+      const d=r.detail||{};const items=d.items||[];
+      return `<div style="border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin-bottom:10px">
+        <div style="display:flex;gap:8px;align-items:center"><b>${esc(r.task_name)}</b>
+        ${d.healthy?badge('健康','green'):badge('异常','orange')}
+        <span class="hint mono">${esc(String(r.started_at).slice(5,16))}</span></div>
+        ${items.map(i=>`<div style="font-size:12px;margin-top:4px">${i.level==='ok'?'✅':'⚠️'} <b>${esc(i.name)}</b> <span class="hint">${esc(i.detail)}</span></div>`).join('')}
+      </div>`}).join(''):'<div class="empty">暂无巡检报告（需创建交换机巡检任务）</div>';
+  }catch(e){}
+}
+
 async function saveAIModel(){
   const body={
     enabled:document.getElementById('ai-enabled').checked,

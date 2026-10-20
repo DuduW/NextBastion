@@ -2319,6 +2319,7 @@ import ldap_auth
 # 14.5 AI 辅助分析（V1.8 · SSE 流式 + 脱敏 + 审计）
 # ============================================================
 import ai_proxy
+import tasks as tasks_mod
 from fastapi.responses import StreamingResponse
 
 
@@ -2393,6 +2394,202 @@ async def ai_chat(request: Request, p=Depends(auth)):
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+
+# ============================================================
+# 14.6 任务管理（V2.0 · owner 私有 · Linux 脚本/交换机备份/巡检）
+# ============================================================
+
+def _task_owned(task_id: int, uid: int):
+    return utils.query("SELECT * FROM tasks WHERE id=%s AND owner_id=%s", (task_id, uid), one=True)
+
+
+@app.get("/api/v1/tasks")
+async def tasks_list(p=Depends(auth)):
+    return utils.ok(tasks_mod.list_tasks(p["sub"]))
+
+
+@app.post("/api/v1/tasks")
+async def task_create(request: Request, p=Depends(auth)):
+    b = await request.json()
+    name = _sanitize_text(b.get("name") or "", 128)
+    type_ = b.get("type") if b.get("type") in ("script", "backup", "inspect") else None
+    asset_ids = b.get("asset_ids") or []
+    cron_expr = (b.get("cron_expr") or "").strip()
+    if not name or not type_ or not asset_ids or not cron_expr:
+        raise HTTPException(400, "name/type/asset_ids/cron_expr 必填")
+    if len(cron_expr.split()) != 5:
+        raise HTTPException(400, "cron_expr 需为 5 段（分 时 日 月 周）")
+    # 资产授权校验：仅允许本人授权资产
+    valid_ids = []
+    for aid in asset_ids:
+        a = utils.query("SELECT id FROM assets WHERE id=%s", (aid,), one=True)
+        if a and tasks_mod._check_owner_access(
+                utils.query("SELECT * FROM users WHERE id=%s", (p["sub"],), one=True), aid):
+            valid_ids.append(aid)
+    if not valid_ids:
+        raise HTTPException(400, "无本人授权资产（选择器范围外的资产被剔除后为空）")
+    tid = utils.execute(
+        "INSERT INTO tasks (name,type,asset_ids,script_text,commands,cron_expr,enabled,timeout_s,notify_on,thresholds,owner_id) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (name, type_, json.dumps(valid_ids), b.get("script_text"),
+         json.dumps(b.get("commands")) if b.get("commands") else None,
+         cron_expr, 1 if b.get("enabled", 1) else 0,
+         min(600, max(30, int(b.get("timeout_s") or 120))),
+         _sanitize_text(b.get("notify_on") or "fail", 64),
+         json.dumps(b.get("thresholds")) if b.get("thresholds") else None,
+         p["sub"]))
+    write_audit(p['username'], 'task_create', 'task', tid, {'name': name, 'type': type_})
+    return utils.ok({"id": tid})
+
+
+@app.put("/api/v1/tasks/{tid}")
+async def task_update(tid: int, request: Request, p=Depends(auth)):
+    if not _task_owned(tid, p["sub"]):
+        raise HTTPException(404, "任务不存在")
+    b = await request.json()
+    sets, args = [], []
+    if "name" in b:
+        sets.append("name=%s"); args.append(_sanitize_text(b["name"], 128))
+    if "asset_ids" in b:
+        sets.append("asset_ids=%s"); args.append(json.dumps([int(x) for x in b["asset_ids"]]))
+    if "script_text" in b:
+        sets.append("script_text=%s"); args.append(b["script_text"])
+    if "cron_expr" in b:
+        if len((b["cron_expr"] or "").split()) != 5:
+            raise HTTPException(400, "cron_expr 需为 5 段")
+        sets.append("cron_expr=%s"); args.append(b["cron_expr"].strip())
+    if "enabled" in b:
+        sets.append("enabled=%s"); args.append(1 if b["enabled"] else 0)
+    if "notify_on" in b:
+        sets.append("notify_on=%s"); args.append(_sanitize_text(b["notify_on"], 64))
+    if "thresholds" in b:
+        sets.append("thresholds=%s"); args.append(json.dumps(b["thresholds"]) if b["thresholds"] else None)
+    if sets:
+        args.append(tid); args.append(p["sub"])
+        utils.execute(f"UPDATE tasks SET {','.join(sets)} WHERE id=%s AND owner_id=%s", args)
+    write_audit(p['username'], 'task_update', 'task', tid, {})
+    return utils.ok({"saved": True})
+
+
+@app.delete("/api/v1/tasks/{tid}")
+async def task_delete(tid: int, p=Depends(auth)):
+    if not _task_owned(tid, p["sub"]):
+        raise HTTPException(404, "任务不存在")
+    utils.execute("DELETE FROM tasks WHERE id=%s AND owner_id=%s", (tid, p["sub"]))
+    write_audit(p['username'], 'task_delete', 'task', tid, {})
+    return utils.ok({"deleted": True})
+
+
+@app.post("/api/v1/tasks/{tid}/run")
+async def task_run_now(tid: int, p=Depends(auth)):
+    if not _task_owned(tid, p["sub"]):
+        raise HTTPException(404, "任务不存在")
+    import threading
+    threading.Thread(target=tasks_mod.run_task, args=(tid, p["sub"], "manual"), daemon=True).start()
+    write_audit(p['username'], 'task_run', 'task', tid, {'trigger': 'manual'})
+    return utils.ok({"started": True})
+
+
+# ---- 资产维度数据（owner+授权双重过滤；供「我的资产」抽屉） ----
+
+def _my_asset_or_404(aid: int, p):
+    a = utils.query("SELECT * FROM assets WHERE id=%s", (aid,), one=True)
+    if not a:
+        raise HTTPException(404, "资产不存在")
+    user = utils.query("SELECT * FROM users WHERE id=%s", (p["sub"],), one=True)
+    if p["role"] != "admin" and not tasks_mod._check_owner_access(user, aid):
+        raise HTTPException(403, "无该资产授权")
+    return a
+
+
+@app.get("/api/v1/my/assets/{aid}/overview")
+async def asset_task_overview(aid: int, p=Depends(auth)):
+    _my_asset_or_404(aid, p)
+    snaps = utils.query("SELECT COUNT(*) n, MAX(created_at) last FROM config_snapshots WHERE asset_id=%s AND owner_id=%s", (aid, p["sub"]), one=True)
+    runs = utils.query("SELECT COUNT(*) n FROM task_run_items i JOIN task_runs r ON i.run_id=r.id "
+                       "WHERE i.asset_id=%s AND r.owner_id=%s", (aid, p["sub"]), one=True)
+    alarms = utils.query("SELECT COUNT(*) n FROM task_run_items i JOIN task_runs r ON i.run_id=r.id "
+                         "WHERE i.asset_id=%s AND r.owner_id=%s AND JSON_EXTRACT(i.detail,'$.healthy')=false", (aid, p["sub"]), one=True)
+    tasks_n = utils.query("SELECT COUNT(*) n FROM tasks WHERE JSON_CONTAINS(asset_ids, CAST(%s AS JSON)) AND owner_id=%s", (str(aid), p["sub"]), one=True)
+    last_run = utils.query("SELECT r.started_at FROM task_run_items i JOIN task_runs r ON i.run_id=r.id "
+                           "WHERE i.asset_id=%s AND r.owner_id=%s ORDER BY r.id DESC LIMIT 1", (aid, p["sub"]), one=True)
+    return utils.ok({"snapshots": snaps["n"], "last_snapshot": snaps["last"],
+                     "runs": runs["n"], "inspections_unhealthy": alarms["n"],
+                     "tasks": tasks_n["n"], "last_run": last_run["started_at"] if last_run else None})
+
+
+@app.get("/api/v1/my/assets/{aid}/runs")
+async def asset_task_runs(aid: int, p=Depends(auth)):
+    _my_asset_or_404(aid, p)
+    rows = utils.query(
+        "SELECT i.status, i.exit_code, LEFT(i.output, 20000) output, i.detail, r.started_at, r.`trigger`, t.name task_name "
+        "FROM task_run_items i JOIN task_runs r ON i.run_id=r.id JOIN tasks t ON t.id=r.task_id "
+        "WHERE i.asset_id=%s AND r.owner_id=%s ORDER BY r.id DESC LIMIT 50", (aid, p["sub"]))
+    return utils.ok(rows)
+
+
+@app.get("/api/v1/my/assets/{aid}/backups")
+async def asset_task_backups(aid: int, p=Depends(auth)):
+    _my_asset_or_404(aid, p)
+    rows = utils.query("SELECT id, hash, size, changed, created_at FROM config_snapshots "
+                       "WHERE asset_id=%s AND owner_id=%s ORDER BY id DESC LIMIT 100", (aid, p["sub"]))
+    return utils.ok(rows)
+
+
+@app.get("/api/v1/my/assets/{aid}/backups/{snap_id}")
+async def asset_task_backup_content(aid: int, snap_id: int, p=Depends(auth)):
+    _my_asset_or_404(aid, p)
+    row = utils.query("SELECT * FROM config_snapshots WHERE id=%s AND asset_id=%s AND owner_id=%s",
+                      (snap_id, aid, p["sub"]), one=True)
+    if not row:
+        raise HTTPException(404, "版本不存在")
+    return FileResponse.__class__  # placeholder never hit
+
+
+@app.get("/api/v1/my/assets/{aid}/backups/{snap_id}/diff")
+async def asset_task_backup_diff(aid: int, snap_id: int, p=Depends(auth)):
+    _my_asset_or_404(aid, p)
+    cur = utils.query("SELECT * FROM config_snapshots WHERE id=%s AND asset_id=%s AND owner_id=%s",
+                      (snap_id, aid, p["sub"]), one=True)
+    if not cur:
+        raise HTTPException(404, "版本不存在")
+    prev = utils.query("SELECT * FROM config_snapshots WHERE asset_id=%s AND owner_id=%s AND id<%s "
+                       "ORDER BY id DESC LIMIT 1", (aid, p["sub"], snap_id), one=True)
+    d = tasks_mod.diff_snapshots(prev["content"] if prev else "", cur["content"])
+    return utils.ok({"id": cur["id"], "created_at": cur["created_at"], "changed": bool(cur["changed"]),
+                     "size": cur["size"], "prev_id": prev["id"] if prev else None, "diff": d})
+
+
+@app.get("/api/v1/my/assets/{aid}/backups/{snap_id}/download")
+async def asset_task_backup_download(aid: int, snap_id: int, p=Depends(auth)):
+    _my_asset_or_404(aid, p)
+    row = utils.query("SELECT c.*, a.hostname FROM config_snapshots c JOIN assets a ON a.id=c.asset_id "
+                      "WHERE c.id=%s AND c.asset_id=%s AND c.owner_id=%s", (snap_id, aid, p["sub"]), one=True)
+    if not row:
+        raise HTTPException(404, "版本不存在")
+    import io
+    from fastapi.responses import StreamingResponse
+    buf = io.BytesIO(row["content"].encode())
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/plain",
+                             headers={"Content-Disposition": f"attachment; filename={row['hostname']}_{snap_id}.cfg"})
+
+
+@app.get("/api/v1/my/assets/{aid}/inspections")
+async def asset_task_inspections(aid: int, p=Depends(auth)):
+    _my_asset_or_404(aid, p)
+    rows = utils.query(
+        "SELECT i.detail, i.output, r.started_at, t.name task_name FROM task_run_items i "
+        "JOIN task_runs r ON i.run_id=r.id JOIN tasks t ON t.id=r.task_id "
+        "WHERE i.asset_id=%s AND r.owner_id=%s AND t.type='inspect' AND i.detail IS NOT NULL "
+        "ORDER BY r.id DESC LIMIT 50", (aid, p["sub"]))
+    for r in rows:
+        try:
+            r["detail"] = json.loads(r["detail"])
+        except Exception:
+            pass
+    return utils.ok(rows)
 
 # ============================================================
 # 15. MySQL 远程接入（Web SQL 终端 · V1.4）
