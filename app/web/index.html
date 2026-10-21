@@ -1303,12 +1303,12 @@ async function policyForm(id){
     ${mRow('SSH 文件传输',`<div class="m-check">
       <label><span class="switch"><input type="checkbox" id="p-sftp" ${p.rdp.sftp?'checked':''}><span class="sl"></span></span>允许 Web SFTP 文件管理</label>
     </div><div class="hint">默认关闭——勾选后用户方可在 SSH 会话中使用「📁 文件」（上传/下载留审计副本）</div>`)}
-    ${mRow('MySQL 权限级别',`<select id="p-sqllevel">
+    ${mRow('MySQL 权限级别',`<div class="m-check" style="margin-bottom:6px"><label><span class="switch"><input type="checkbox" id="p-sqlcap" ${p.rdp.sql?'checked':''}><span class="sl"></span></span>允许数据库访问（MySQL Web 终端）</label></div><select id="p-sqllevel">
       <option value="1" ${(p.rdp.sql_rw_level||1)==1?'selected':''}>L1 · 只读（SELECT/SHOW/DESC）</option>
       <option value="2" ${(p.rdp.sql_rw_level||0)==2?'selected':''}>L2 · 读 + 增（INSERT）</option>
       <option value="3" ${(p.rdp.sql_rw_level||0)==3?'selected':''}>L3 · 读 + 增 + 改（UPDATE）</option>
       <option value="4" ${(p.rdp.sql_rw_level||0)==4?'selected':''}>L4 · 增删改查全量（DELETE/DDL/GRANT）</option>
-    </select><div class="hint">MySQL 会话生效——语句级别前置拦截（需另行勾选数据库访问能力）；L4 仍受高危规则集约束（DROP DATABASE 等阻断）</div>`)}
+    </select><div class="hint">MySQL 资产生效——未勾选数据库访问则无法打开 SQL 终端；级别为语句级前置拦截；L4 仍受高危规则集约束（DROP DATABASE 等阻断）</div>`)}
   </div>
   <div class="modal-foot">
     <button class="btn btn-ghost" onclick="closeModal()">取消</button>
@@ -1375,7 +1375,9 @@ async function savePolicy(id){
       clipboard:document.getElementById('p-clip').checked,
       drive:document.getElementById('p-drive').checked,
       watermark:document.getElementById('p-wm').checked,
-      sftp:document.getElementById('p-sftp').checked
+      sftp:document.getElementById('p-sftp').checked,
+      sql:document.getElementById('p-sqlcap').checked,
+      sql_rw_level:+document.getElementById('p-sqllevel').value||1
     }
   };
   if(!body.name){toast('策略名必填');return}
