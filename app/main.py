@@ -607,16 +607,15 @@ async def list_assets(request: Request, p=Depends(auth)):
             args += gids
         sql += f""" AND EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
                     AND ((p.asset_or_node_type='asset' AND p.asset_or_node_id=a.id)
-                      OR (p.asset_or_node_type='node' AND p.asset_or_node_id=a.node_id)
-                      OR (p.asset_or_node_type='node' AND p.asset_or_node_id IN (
-                            SELECT x.node_id FROM asset_extra_nodes x WHERE x.asset_id=a.id))))"""
+                      OR (p.asset_or_node_type='group' AND p.asset_or_node_id IN (
+                            SELECT m.group_id FROM asset_group_map m WHERE m.asset_id=a.id))))"""
     if q:
         # 搜索同时匹配：主机名 / IP / 分组（labels JSON 数组文本）
         sql += " AND (a.hostname LIKE %s OR a.ip LIKE %s OR a.labels LIKE %s)"
         args += [f"%{q}%", f"%{q}%", f"%{q}%"]
     if node:
-        sql += " AND (a.node_id=%s OR EXISTS(SELECT 1 FROM asset_extra_nodes x WHERE x.asset_id=a.id AND x.node_id=%s))"
-        args += [node, node]
+        sql += " AND a.node_id=%s"
+        args += [node]
     sql += " ORDER BY a.id LIMIT 500"
     rows = utils.query(sql, args) or []
     gname = {g['id']: g['name'] for g in (utils.query("SELECT id,name FROM asset_groups") or [])}
