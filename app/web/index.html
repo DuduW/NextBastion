@@ -464,7 +464,7 @@ async policies(){
   if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
   const rows=await api('/policies');
   const tr=rows.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.user_or_group_type==='user'?'用户: ':'组: '}${esc(p.user_or_group_name)}</td>
-    <td>${p.asset_or_node_type==='asset'?'资产: ':'分组: '}${esc(p.asset_or_node_name)}</td><td class="mono">${esc(p.account_pattern)}</td>
+    <td>${p.asset_or_node_type==='asset'?'资产: ':'分组: '}${((p.targets&&p.targets.length)?p.targets.map(t=>`<span class="lbl">${esc(t.name)}</span>`).join(' '):esc(p.asset_or_node_name))}${(p.target_count||1)>1?` <span class="badge badge-blue">${p.target_count}</span>`:''}</td><td class="mono">${esc(p.account_pattern)}</td>
     <td>${p.valid_until?esc(String(p.valid_until).slice(0,16).replace('T',' ')):'长期'}</td>
     <td>${p.is_enabled?badge('生效','green'):badge('停用','red')}</td>
     <td style="white-space:nowrap">
@@ -1275,13 +1275,13 @@ async function policyForm(id){
   const [users,groups,assets,nodes,filters,agroups]=await Promise.all([
     api('/users'),api('/users/groups'),api('/assets'),api('/nodes'),api('/filters'),api('/asset-groups')]);
   window.__policyCtx={users,groups,assets,nodes,filters,agroups};
-  let p={name:'',user_type:'group',user_id:((groups[0])||{}).id,asset_type:'group',asset_id:((agroups[0])||{}).id,
+  let p={name:'',user_type:'group',user_id:((groups[0])||{}).id,asset_type:'group',asset_ids:[((agroups[0])||{}).id].filter(Boolean),
          account_pattern:'*',command_filter_id:((filters[0])||{}).id||1,valid_until:'',rdp:{clipboard:false,drive:false,watermark:true,sftp:false}};
   let title='新建授权策略';
   if(id){
     const rows=await api('/policies');const old=rows.find(x=>x.id===id);
     if(old){p={...p,name:old.name,user_type:old.user_or_group_type,user_id:old.user_or_group_id,
-      asset_type:old.asset_or_node_type,asset_id:old.asset_or_node_id,account_pattern:old.account_pattern,
+      asset_type:old.asset_or_node_type,asset_ids:(old.targets&&old.targets.length)?old.targets.map(t=>t.id):[old.asset_or_node_id],account_pattern:old.account_pattern,
       command_filter_id:old.command_filter_id,valid_until:old.valid_until};title='编辑策略 · '+old.name;
       try{p.rdp=JSON.parse(old.rdp_session_config)||p.rdp}catch(e){}}
   }
@@ -1291,7 +1291,8 @@ async function policyForm(id){
   <div class="modal-body">
     ${mRow('策略名 *','<input id="p-name" value="'+esc(p.name)+'" placeholder="如 INFRA-生产-全时">')}
     ${mRow('授权对象','<select id="p-utype" onchange="tgtSwitch()"><option value="group" '+(p.user_type!=='user'?'selected':'')+'>用户组</option><option value="user" '+(p.user_type==='user'?'selected':'')+'>用户</option></select><select id="p-uid"></select>')}
-    ${mRow('目标范围','<select id="p-atype" onchange="tgtSwitch()"><option value="group" '+(p.asset_type!=='asset'?'selected':'')+'>资产分组</option><option value="asset" '+(p.asset_type==='asset'?'selected':'')+'>单个资产</option></select><select id="p-aid"></select>')}
+    ${mRow('目标类型','<select id="p-atype" onchange="tgtSwitch()"><option value="group" '+(p.asset_type!=='asset'?'selected':'')+'>资产分组</option><option value="asset" '+(p.asset_type==='asset'?'selected':'')+'>单个资产</option></select>')}
+    ${mRow('目标范围（可多选）','<select id="p-aid" multiple size="6" style="min-height:120px"></select><div class="hint">按住 Ctrl/⌘ 可多选；一条策略可授权多个分组（或多个资产）</div>')}
     ${mRow('账号匹配','<input id="p-acct" value="'+esc(p.account_pattern)+'" class="mono" placeholder="* / root / app*">')}
     ${mRow('命令过滤','<select id="p-filter">'+fOpts+'</select><div class="hint">SSH 会话生效；RDP 会话不适用命令过滤</div>')}
     ${mRow('有效期至','<input id="p-valid" type="datetime-local" value="'+esc((p.valid_until||'').toString().slice(0,16))+'"><div class="hint">留空 = 长期有效（临时授权可设过期，到期自动失效）</div>')}
@@ -1314,7 +1315,8 @@ async function policyForm(id){
     <button class="btn btn-ghost" onclick="closeModal()">取消</button>
     <button class="btn btn-primary" onclick="savePolicy(${id||0})">${id?'保存修改':'创 建'}</button>
   </div>`);
-  tgtSwitch(p.user_id,p.asset_id);
+  window.__policySelIds=p.asset_ids||[];
+  tgtSwitch(p.user_id,p.asset_ids);
   document.getElementById('p-filter').value=p.command_filter_id||1;
 }
 // ===== V2.2 资产分组 =====
@@ -1359,7 +1361,11 @@ function tgtSwitch(keepUid,keepAid){
   const uid=document.getElementById('p-uid'),aid=document.getElementById('p-aid');
   const fill=(sel,list,val)=>{sel.innerHTML=list.map(x=>`<option value="${x.id}">${esc(x.name||x.hostname||x.username)}${x.ip?' ('+esc(x.ip)+')':''}</option>`).join('');if(val)sel.value=val;};
   fill(uid,ut==='group'?ctx.groups:ctx.users,keepUid||uid.value);
-  fill(aid,at==='group'?(ctx.agroups||[]):ctx.assets,keepAid||aid.value);
+  const tgtList=at==='group'?(ctx.agroups||[]):ctx.assets;
+  aid.innerHTML=tgtList.map(x=>`<option value="${x.id}">${esc(x.name||x.hostname)}${x.ip?' ('+esc(x.ip)+')':''}</option>`).join('');
+  const selIds=(keepAid?(Array.isArray(keepAid)?keepAid:[keepAid]):(window.__policySelIds||[]));
+  [...aid.options].forEach(o=>{if(selIds.map(String).includes(o.value))o.selected=true});
+  window.__policySelIds=selIds;
 }
 async function savePolicy(id){
   const body={
@@ -1367,7 +1373,7 @@ async function savePolicy(id){
     user_type:document.getElementById('p-utype').value,
     user_id:+document.getElementById('p-uid').value,
     asset_type:document.getElementById('p-atype').value,
-    asset_id:+document.getElementById('p-aid').value,
+    asset_ids:[...document.getElementById('p-aid').selectedOptions].map(o=>+o.value),
     account_pattern:document.getElementById('p-acct').value.trim()||'*',
     command_filter_id:+document.getElementById('p-filter').value||null,
     valid_until:document.getElementById('p-valid').value||null,

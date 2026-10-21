@@ -606,9 +606,10 @@ async def list_assets(request: Request, p=Depends(auth)):
             conds += f" OR (p.user_or_group_type='group' AND p.user_or_group_id IN ({','.join(['%s']*len(gids))}))"
             args += gids
         sql += f""" AND EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
-                    AND ((p.asset_or_node_type='asset' AND p.asset_or_node_id=a.id)
-                      OR (p.asset_or_node_type='group' AND p.asset_or_node_id IN (
-                            SELECT m.group_id FROM asset_group_map m WHERE m.asset_id=a.id))))"""
+                    AND ((p.asset_or_node_type='asset' AND (p.asset_or_node_id=a.id OR JSON_CONTAINS(p.asset_ids_json, CAST(a.id AS JSON))))
+                      OR (p.asset_or_node_type='group' AND (
+                            SELECT COUNT(*) FROM asset_group_map m2 WHERE m2.asset_id=a.id
+                              AND (m2.group_id IN (p.asset_or_node_id) OR m2.group_id MEMBER OF (p.asset_ids_json))) > 0)))"""
     if q:
         # 搜索同时匹配：主机名 / IP / 分组（labels JSON 数组文本）
         sql += " AND (a.hostname LIKE %s OR a.ip LIKE %s OR a.labels LIKE %s)"
@@ -718,10 +719,19 @@ async def delete_asset_group(gid: int, p=Depends(require_role('admin'))):
     row = utils.query("SELECT * FROM asset_groups WHERE id=%s", (gid,), one=True)
     if not row:
         raise HTTPException(404, "group not found")
-    n = utils.query("SELECT COUNT(*) c FROM access_policies WHERE asset_or_node_type='group' AND asset_or_node_id=%s",
-                    (gid,), one=True)
+    n = utils.query("SELECT COUNT(*) c FROM access_policies WHERE asset_or_node_type='group' AND (asset_or_node_id=%s OR JSON_CONTAINS(asset_ids_json, CAST(%s AS JSON)))",
+                    (gid, gid), one=True)
     if n and n['c'] > 0:
         raise HTTPException(400, f"组被 {n['c']} 条授权策略引用，请先调整策略")
+    for pol in (utils.query("SELECT id, asset_ids_json FROM access_policies WHERE asset_ids_json IS NOT NULL") or []):
+        try:
+            ids = json.loads(pol['asset_ids_json'] or '[]')
+        except Exception:
+            continue
+        if gid in ids:
+            ids2 = [x for x in ids if x != gid]
+            utils.execute("UPDATE access_policies SET asset_ids_json=%s WHERE id=%s",
+                          (json.dumps(ids2) if ids2 else None, pol['id']))
     utils.execute("DELETE FROM asset_group_map WHERE group_id=%s", (gid,))
     utils.execute("DELETE FROM asset_groups WHERE id=%s", (gid,))
     write_audit(p['username'], 'delete_asset_group', 'asset_group', gid, {'name': row['name']})
@@ -824,6 +834,16 @@ async def delete_asset(aid: int, p=Depends(require_role('admin'))):
     if in_use and in_use['c']:
         raise HTTPException(409, "该资产存在在线会话，请先断开")
     utils.execute("DELETE FROM asset_accounts WHERE asset_id=%s", (aid,))
+    # V2.3：清理多目标策略中对该资产的引用
+    for pol in (utils.query("SELECT id, asset_ids_json FROM access_policies WHERE asset_ids_json IS NOT NULL") or []):
+        try:
+            ids = json.loads(pol['asset_ids_json'] or '[]')
+        except Exception:
+            continue
+        if aid in ids:
+            ids2 = [x for x in ids if x != aid]
+            utils.execute("UPDATE access_policies SET asset_ids_json=%s WHERE id=%s",
+                          (json.dumps(ids2) if ids2 else None, pol['id']))
     utils.execute("DELETE FROM assets WHERE id=%s", (aid,))
     write_audit(p['username'], 'delete_asset', 'asset', aid, {'hostname': row['hostname']})
     return utils.ok(message="deleted")
@@ -858,20 +878,36 @@ async def list_policies(p=Depends(require_role('admin','auditor'))):
         LEFT JOIN asset_nodes n ON p.asset_or_node_type='node' AND n.id=p.asset_or_node_id
         LEFT JOIN command_filters f ON p.command_filter_id=f.id
         ORDER BY p.id""")
+    # V2.3：多目标名称展开（asset_ids_json → [{id,name}]）
+    gmap = {g['id']: g['name'] for g in (utils.query("SELECT id,name FROM asset_groups") or [])}
+    amap = {a['id']: a['hostname'] for a in (utils.query("SELECT id,hostname FROM assets") or [])}
+    for r in rows:
+        try:
+            ids = json.loads(r.get('asset_ids_json')) if r.get('asset_ids_json') else []
+        except Exception:
+            ids = []
+        src = gmap if r['asset_or_node_type'] == 'group' else amap
+        r['targets'] = [{'id': i, 'name': src.get(i, f'#{i}')} for i in ids]
+        r['target_count'] = len(ids) or 1
     return utils.ok(rows)
 
 @app.post("/api/v1/policies")
 async def create_policy(request: Request, p=Depends(require_role('admin'))):
     b = await request.json()
+    ids = b.get('asset_ids') or []
+    primary = b['asset_id'] if b.get('asset_id') else (ids[0] if ids else None)
+    if not primary:
+        raise HTTPException(400, "目标必填")
     pid = utils.execute("""INSERT INTO access_policies
-        (name, user_or_group_type, user_or_group_id, asset_or_node_type, asset_or_node_id,
+        (name, user_or_group_type, user_or_group_id, asset_or_node_type, asset_or_node_id, asset_ids_json,
          account_pattern, allowed_periods, command_filter_id, rdp_session_config, valid_until, created_by)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (b['name'], b.get('user_type', 'group'), b['user_id'], b.get('asset_type', 'group'),
-         b['asset_id'], b.get('account_pattern', '*'),
+         primary, json.dumps([int(x) for x in ids]) if ids else None,
+         b.get('account_pattern', '*'),
          json.dumps(b.get('allowed_periods')), b.get('command_filter_id'),
          json.dumps(b.get('rdp_session_config')), b.get('valid_until') or None, p['username']))
-    write_audit(p['username'], 'create_policy', 'policy', pid, {'name': b['name']})
+    write_audit(p['username'], 'create_policy', 'policy', pid, {'name': b['name'], 'targets': len(ids) or 1})
     return utils.ok({"id": pid})
 
 @app.put("/api/v1/policies/{pid}")
@@ -880,12 +916,17 @@ async def update_policy(pid: int, request: Request, p=Depends(require_role('admi
     row = utils.query("SELECT * FROM access_policies WHERE id=%s", (pid,), one=True)
     if not row:
         raise HTTPException(404, "policy not found")
+    ids = b.get('asset_ids')
+    if ids is None:
+        ids = json.loads(row['asset_ids_json']) if row.get('asset_ids_json') else []
+    primary = b['asset_id'] if b.get('asset_id') else (ids[0] if ids else row['asset_or_node_id'])
     utils.execute("""UPDATE access_policies SET name=%s, user_or_group_type=%s, user_or_group_id=%s,
-                     asset_or_node_type=%s, asset_or_node_id=%s, account_pattern=%s, allowed_periods=%s,
+                     asset_or_node_type=%s, asset_or_node_id=%s, asset_ids_json=%s, account_pattern=%s, allowed_periods=%s,
                      command_filter_id=%s, rdp_session_config=%s, valid_until=%s, is_enabled=%s WHERE id=%s""",
                   (b.get('name', row['name']), b.get('user_type', row['user_or_group_type']),
                    b.get('user_id', row['user_or_group_id']), b.get('asset_type', row['asset_or_node_type']),
-                   b.get('asset_id', row['asset_or_node_id']), b.get('account_pattern', row['account_pattern']),
+                   primary, json.dumps([int(x) for x in ids]) if ids else None,
+                   b.get('account_pattern', row['account_pattern']),
                    json.dumps(b.get('allowed_periods')) if 'allowed_periods' in b else row['allowed_periods'],
                    b.get('command_filter_id', row['command_filter_id']),
                    json.dumps(b.get('rdp_session_config')) if 'rdp_session_config' in b else row['rdp_session_config'],
@@ -1035,12 +1076,13 @@ def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
     now = datetime.now()
     sql = f"""SELECT * FROM access_policies WHERE is_enabled=1
         AND ({conds_user})
-        AND ((asset_or_node_type='asset' AND asset_or_node_id=%s)
-             OR (asset_or_node_type='group' AND asset_or_node_id IN (
-                  SELECT group_id FROM asset_group_map WHERE asset_id=%s)))
+        AND ((asset_or_node_type='asset' AND (asset_or_node_id=%s OR JSON_CONTAINS(asset_ids_json, CAST(%s AS JSON))))
+             OR (asset_or_node_type='group' AND (
+                  SELECT COUNT(*) FROM asset_group_map WHERE asset_id=%s
+                    AND (group_id IN (asset_or_node_id) OR group_id MEMBER OF (asset_ids_json))) > 0))
         AND (valid_until IS NULL OR valid_until > NOW())
         AND (valid_from IS NULL OR valid_from < NOW())"""
-    args += [asset_id, asset_id]
+    args += [asset_id, asset_id, asset_id]
     for pol in utils.query(sql, args):
         pat = pol['account_pattern'] or '*'
         if pat != '*' and not re.match(f"^{pat.replace('*', '.*')}$", account or ''):
@@ -1074,12 +1116,13 @@ def check_access_all(user: dict, asset_id: int, account: str) -> list:
     now = datetime.now()
     sql = f"""SELECT * FROM access_policies WHERE is_enabled=1
         AND ({conds_user})
-        AND ((asset_or_node_type='asset' AND asset_or_node_id=%s)
-             OR (asset_or_node_type='group' AND asset_or_node_id IN (
-                  SELECT group_id FROM asset_group_map WHERE asset_id=%s)))
+        AND ((asset_or_node_type='asset' AND (asset_or_node_id=%s OR JSON_CONTAINS(asset_ids_json, CAST(%s AS JSON))))
+             OR (asset_or_node_type='group' AND (
+                  SELECT COUNT(*) FROM asset_group_map WHERE asset_id=%s
+                    AND (group_id IN (asset_or_node_id) OR group_id MEMBER OF (asset_ids_json))) > 0))
         AND (valid_until IS NULL OR valid_until > NOW())
         AND (valid_from IS NULL OR valid_from < NOW())"""
-    args += [asset_id, asset_id]
+    args += [asset_id, asset_id, asset_id]
     out = []
     for pol in utils.query(sql, args):
         pat = pol['account_pattern'] or '*'
@@ -1132,9 +1175,10 @@ async def my_assets(payload=Depends(auth)):
               FROM assets a
               JOIN asset_nodes n ON a.node_id=n.id
               WHERE EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
-                            AND ((p.asset_or_node_type='asset' AND p.asset_or_node_id=a.id)
-                              OR (p.asset_or_node_type='group' AND p.asset_or_node_id IN (
-                                    SELECT m.group_id FROM asset_group_map m WHERE m.asset_id=a.id))))
+                            AND ((p.asset_or_node_type='asset' AND (p.asset_or_node_id=a.id OR JSON_CONTAINS(p.asset_ids_json, CAST(a.id AS JSON))))
+                              OR (p.asset_or_node_type='group' AND (
+                                    SELECT COUNT(*) FROM asset_group_map m3 WHERE m3.asset_id=a.id
+                                      AND (m3.group_id IN (p.asset_or_node_id) OR m3.group_id MEMBER OF (p.asset_ids_json))) > 0)))
               ORDER BY a.id LIMIT 300"""
     return utils.ok(utils.query(sql, args))
 
