@@ -590,7 +590,7 @@ async def list_assets(request: Request, p=Depends(auth)):
     node = request.query_params.get('node', '')
     sql = """SELECT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.ssh_port, a.rdp_port, a.device_type,
              a.status, a.node_id, n.name AS node_name,
-             (SELECT COUNT(*) FROM asset_extra_nodes x WHERE x.asset_id=a.id) AS extra_node_count,
+             (SELECT GROUP_CONCAT(m.group_id) FROM asset_group_map m WHERE m.asset_id=a.id) AS group_ids,
              (SELECT acc.username FROM asset_accounts acc WHERE acc.asset_id=a.id AND acc.status='active' LIMIT 1) AS account,
              (SELECT COUNT(*) FROM asset_accounts acc2 WHERE acc2.asset_id=a.id AND acc2.status='active') AS account_count,
              a.labels
@@ -618,7 +618,12 @@ async def list_assets(request: Request, p=Depends(auth)):
         sql += " AND (a.node_id=%s OR EXISTS(SELECT 1 FROM asset_extra_nodes x WHERE x.asset_id=a.id AND x.node_id=%s))"
         args += [node, node]
     sql += " ORDER BY a.id LIMIT 500"
-    return utils.ok(utils.query(sql, args))
+    rows = utils.query(sql, args) or []
+    gname = {g['id']: g['name'] for g in (utils.query("SELECT id,name FROM asset_groups") or [])}
+    for r in rows:
+        r['group_ids'] = [int(x) for x in (r['group_ids'] or '').split(',') if x.strip()]
+        r['group_names'] = [gname[i] for i in r['group_ids'] if i in gname]
+    return utils.ok(rows)
 
 
 def _set_extra_nodes(aid: int, node_ids: list, primary_node_id):
@@ -638,6 +643,100 @@ def _set_extra_nodes(aid: int, node_ids: list, primary_node_id):
             utils.execute("INSERT IGNORE INTO asset_extra_nodes (asset_id, node_id) VALUES (%s,%s)", (aid, n))
     return len(clean), sorted(old)
 
+# ============================================================
+# 14.7 资产分组（V2.2 · 多对多 · 授权目标之一）
+# ============================================================
+
+def _set_asset_groups(aid: int, group_ids: list):
+    """资产分组全量替换"""
+    clean = []
+    for g in (group_ids or []):
+        try:
+            g = int(g)
+        except (TypeError, ValueError):
+            continue
+        if g not in clean:
+            clean.append(g)
+    utils.execute("DELETE FROM asset_group_map WHERE asset_id=%s", (aid,))
+    for g in clean:
+        if utils.query("SELECT id FROM asset_groups WHERE id=%s", (g,), one=True):
+            utils.execute("INSERT IGNORE INTO asset_group_map (group_id, asset_id) VALUES (%s,%s)", (g, aid))
+    return len(clean)
+
+
+@app.get("/api/v1/asset-groups")
+async def list_asset_groups(p=Depends(auth)):
+    rows = utils.query("""SELECT g.*, (SELECT COUNT(*) FROM asset_group_map m WHERE m.group_id=g.id) AS asset_count
+                          FROM asset_groups g ORDER BY g.id""")
+    return utils.ok(rows)
+
+
+@app.post("/api/v1/asset-groups")
+async def create_asset_group(request: Request, p=Depends(require_role('admin'))):
+    b = await request.json()
+    name = _sanitize_text(b.get('name') or '', 128)
+    if not name:
+        raise HTTPException(400, "组名必填")
+    if utils.query("SELECT id FROM asset_groups WHERE name=%s", (name,), one=True):
+        raise HTTPException(400, "组名已存在")
+    gid = utils.execute("INSERT INTO asset_groups (name, comment) VALUES (%s,%s)",
+                        (name, _sanitize_text(b.get('comment') or '', 255)))
+    if b.get('asset_ids'):
+        for aid in b['asset_ids']:
+            utils.execute("INSERT IGNORE INTO asset_group_map (group_id, asset_id) VALUES (%s,%s)", (gid, aid))
+    write_audit(p['username'], 'create_asset_group', 'asset_group', gid, {'name': name})
+    return utils.ok({"id": gid})
+
+
+@app.put("/api/v1/asset-groups/{gid}")
+async def update_asset_group(gid: int, request: Request, p=Depends(require_role('admin'))):
+    b = await request.json()
+    row = utils.query("SELECT * FROM asset_groups WHERE id=%s", (gid,), one=True)
+    if not row:
+        raise HTTPException(404, "group not found")
+    name = _sanitize_text(b.get('name') or row['name'], 128)
+    dup = utils.query("SELECT id FROM asset_groups WHERE name=%s AND id<>%s", (name, gid), one=True)
+    if dup:
+        raise HTTPException(400, "组名已存在")
+    utils.execute("UPDATE asset_groups SET name=%s, comment=%s WHERE id=%s",
+                  (name, _sanitize_text(b.get('comment') or row['comment'], 255), gid))
+    if b.get('asset_ids') is not None:
+        # 全量替换组员
+        utils.execute("DELETE FROM asset_group_map WHERE group_id=%s", (gid,))
+        for aid in b['asset_ids']:
+            try:
+                aid = int(aid)
+            except (TypeError, ValueError):
+                continue
+            if utils.query("SELECT id FROM assets WHERE id=%s", (aid,), one=True):
+                utils.execute("INSERT IGNORE INTO asset_group_map (group_id, asset_id) VALUES (%s,%s)", (gid, aid))
+    write_audit(p['username'], 'update_asset_group', 'asset_group', gid, {'name': name})
+    return utils.ok(message="updated")
+
+
+@app.delete("/api/v1/asset-groups/{gid}")
+async def delete_asset_group(gid: int, p=Depends(require_role('admin'))):
+    row = utils.query("SELECT * FROM asset_groups WHERE id=%s", (gid,), one=True)
+    if not row:
+        raise HTTPException(404, "group not found")
+    n = utils.query("SELECT COUNT(*) c FROM access_policies WHERE asset_or_node_type='group' AND asset_or_node_id=%s",
+                    (gid,), one=True)
+    if n and n['c'] > 0:
+        raise HTTPException(400, f"组被 {n['c']} 条授权策略引用，请先调整策略")
+    utils.execute("DELETE FROM asset_group_map WHERE group_id=%s", (gid,))
+    utils.execute("DELETE FROM asset_groups WHERE id=%s", (gid,))
+    write_audit(p['username'], 'delete_asset_group', 'asset_group', gid, {'name': row['name']})
+    return utils.ok(message="deleted")
+
+
+@app.get("/api/v1/assets/{aid}/groups")
+async def asset_groups_of(aid: int, p=Depends(require_role('admin'))):
+    """资产所属分组（编辑回显）"""
+    rows = utils.query("""SELECT g.id FROM asset_group_map m JOIN asset_groups g ON g.id=m.group_id
+                          WHERE m.asset_id=%s ORDER BY g.id""", (aid,))
+    return utils.ok([r['id'] for r in rows])
+
+
 @app.post("/api/v1/assets")
 async def create_asset(request: Request, p=Depends(require_role('admin'))):
     b = await request.json()
@@ -656,8 +755,10 @@ async def create_asset(request: Request, p=Depends(require_role('admin'))):
                       (aid, b.get('account', 'root'), utils.encrypt_secret(b['password']),
                        utils.encrypt_secret(b['enable_password']) if b.get('enable_password') else None))
     _set_extra_nodes(aid, b.get('extra_nodes') or [], b.get('node_id', 1))
+    if b.get('group_ids'):
+        _set_asset_groups(aid, b['group_ids'])
     write_audit(p['username'], 'create_asset', 'asset', aid, {'hostname': b['hostname'], 'ip': b['ip'],
-               'extra_nodes': b.get('extra_nodes') or []})
+               'groups': b.get('group_ids') or []})
     return utils.ok({"id": aid})
 
 @app.put("/api/v1/assets/{aid}")
@@ -684,11 +785,14 @@ async def update_asset(aid: int, request: Request, p=Depends(require_role('admin
         else:
             utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted) VALUES (%s,%s,'password',%s)",
                           (aid, acct, utils.encrypt_secret(b['password'])))
-    # V1.5：附属节点全量替换（body 带 extra_nodes 时）
+    # V1.5：附属节点全量替换（body 带 extra_nodes 时；V2.2 起资产只归一个节点，extra_nodes 不再使用）
     if b.get('extra_nodes') is not None:
         _set_extra_nodes(aid, b.get('extra_nodes'), b.get('node_id', row['node_id']))
+    # V2.2：分组全量替换（body 带 group_ids 时）
+    if b.get('group_ids') is not None:
+        _set_asset_groups(aid, b['group_ids'])
     write_audit(p['username'], 'update_asset', 'asset', aid, {'hostname': b.get('hostname'),
-               'extra_nodes': b.get('extra_nodes')})
+               'groups': b.get('group_ids')})
     return utils.ok(message="updated")
 
 @app.get("/api/v1/assets/{aid}/extra-nodes")
@@ -745,12 +849,13 @@ async def asset_accounts(aid: int, p=Depends(auth)):
 async def list_policies(p=Depends(require_role('admin','auditor'))):
     rows = utils.query("""
         SELECT p.*, CASE p.user_or_group_type WHEN 'user' THEN u.username ELSE g.name END AS user_or_group_name,
-               CASE p.asset_or_node_type WHEN 'asset' THEN a.hostname ELSE n.name END AS asset_or_node_name,
+               CASE p.asset_or_node_type WHEN 'asset' THEN a.hostname WHEN 'group' THEN ag.name ELSE n.name END AS asset_or_node_name,
                f.name AS filter_name
         FROM access_policies p
         LEFT JOIN users u ON p.user_or_group_type='user' AND u.id=p.user_or_group_id
         LEFT JOIN user_groups g ON p.user_or_group_type='group' AND g.id=p.user_or_group_id
         LEFT JOIN assets a ON p.asset_or_node_type='asset' AND a.id=p.asset_or_node_id
+        LEFT JOIN asset_groups ag ON p.asset_or_node_type='group' AND ag.id=p.asset_or_node_id
         LEFT JOIN asset_nodes n ON p.asset_or_node_type='node' AND n.id=p.asset_or_node_id
         LEFT JOIN command_filters f ON p.command_filter_id=f.id
         ORDER BY p.id""")
@@ -763,7 +868,7 @@ async def create_policy(request: Request, p=Depends(require_role('admin'))):
         (name, user_or_group_type, user_or_group_id, asset_or_node_type, asset_or_node_id,
          account_pattern, allowed_periods, command_filter_id, rdp_session_config, valid_until, created_by)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (b['name'], b.get('user_type', 'group'), b['user_id'], b.get('asset_type', 'node'),
+        (b['name'], b.get('user_type', 'group'), b['user_id'], b.get('asset_type', 'group'),
          b['asset_id'], b.get('account_pattern', '*'),
          json.dumps(b.get('allowed_periods')), b.get('command_filter_id'),
          json.dumps(b.get('rdp_session_config')), b.get('valid_until') or None, p['username']))
@@ -918,12 +1023,10 @@ def _asset_node_universe(asset: dict) -> list:
 
 
 def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
-    """五维授权判定：用户/组 × 资产/节点（含父节点继承与附属节点，V1.5） × 账号 × 时段。返回命中的策略或 None"""
+    """授权判定（V2.2）：用户/用户组 × 资产/资产组（多组并集） × 账号 × 时段。返回命中的策略或 None"""
     asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
     if not asset:
         return None
-    # V1.5：主锚点祖先链 + 附属节点祖先链（任一节点策略命中即授权）
-    node_ids = _asset_node_universe(asset)
     gids = user_group_ids(user['id'])
     conds_user = "(user_or_group_type='user' AND user_or_group_id=%s)"
     args = [user['id']]
@@ -931,14 +1034,14 @@ def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
         conds_user += f" OR (user_or_group_type='group' AND user_or_group_id IN ({','.join(['%s']*len(gids))}))"
         args += gids
     now = datetime.now()
-    ph_nodes = ','.join(['%s'] * len(node_ids))
     sql = f"""SELECT * FROM access_policies WHERE is_enabled=1
         AND ({conds_user})
         AND ((asset_or_node_type='asset' AND asset_or_node_id=%s)
-             OR (asset_or_node_type='node' AND asset_or_node_id IN ({ph_nodes})))
+             OR (asset_or_node_type='group' AND asset_or_node_id IN (
+                  SELECT group_id FROM asset_group_map WHERE asset_id=%s)))
         AND (valid_until IS NULL OR valid_until > NOW())
         AND (valid_from IS NULL OR valid_from < NOW())"""
-    args += [asset_id] + node_ids
+    args += [asset_id, asset_id]
     for pol in utils.query(sql, args):
         pat = pol['account_pattern'] or '*'
         if pat != '*' and not re.match(f"^{pat.replace('*', '.*')}$", account or ''):
@@ -959,11 +1062,10 @@ def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
     return None
 
 def check_access_all(user: dict, asset_id: int, account: str) -> list:
-    """返回全部命中的启用策略（能力合并用：任一策略开启的能力即生效）"""
+    """返回全部命中的启用策略（能力合并用：任一策略开启的能力即生效）（V2.2 组语义）"""
     asset = utils.query("SELECT * FROM assets WHERE id=%s", (asset_id,), one=True)
     if not asset:
         return []
-    node_ids = _asset_node_universe(asset)
     gids = user_group_ids(user['id'])
     conds_user = "(user_or_group_type='user' AND user_or_group_id=%s)"
     args = [user['id']]
@@ -971,14 +1073,14 @@ def check_access_all(user: dict, asset_id: int, account: str) -> list:
         conds_user += f" OR (user_or_group_type='group' AND user_or_group_id IN ({','.join(['%s']*len(gids))}))"
         args += gids
     now = datetime.now()
-    ph_nodes = ','.join(['%s'] * len(node_ids))
     sql = f"""SELECT * FROM access_policies WHERE is_enabled=1
         AND ({conds_user})
         AND ((asset_or_node_type='asset' AND asset_or_node_id=%s)
-             OR (asset_or_node_type='node' AND asset_or_node_id IN ({ph_nodes})))
+             OR (asset_or_node_type='group' AND asset_or_node_id IN (
+                  SELECT group_id FROM asset_group_map WHERE asset_id=%s)))
         AND (valid_until IS NULL OR valid_until > NOW())
         AND (valid_from IS NULL OR valid_from < NOW())"""
-    args += [asset_id] + node_ids
+    args += [asset_id, asset_id]
     out = []
     for pol in utils.query(sql, args):
         pat = pol['account_pattern'] or '*'
@@ -1025,24 +1127,15 @@ async def my_assets(payload=Depends(auth)):
     if gids:
         conds += f" OR (p.user_or_group_type='group' AND p.user_or_group_id IN ({','.join(['%s']*len(gids))}))"
         args += gids
-    # 节点继承（V1.5 含附属节点）：主链或任一附属链上的策略都生效
+    # V2.2：授权 = 单资产 ∥ 所属资产组（节点不参与）
     sql = f"""SELECT DISTINCT a.id, a.hostname, a.ip, a.os_type, a.protocol, a.labels, a.device_type,
-                     n.name AS node_name,
-                     (SELECT COUNT(*) FROM asset_extra_nodes x WHERE x.asset_id=a.id) AS extra_node_count
+                     n.name AS node_name
               FROM assets a
               JOIN asset_nodes n ON a.node_id=n.id
               WHERE EXISTS (SELECT 1 FROM access_policies p WHERE p.is_enabled=1 AND ({conds})
                             AND ((p.asset_or_node_type='asset' AND p.asset_or_node_id=a.id)
-                              OR (p.asset_or_node_type='node' AND p.asset_or_node_id IN (
-                                    SELECT n2.id FROM asset_nodes n2
-                                    WHERE n2.id=a.node_id
-                                       OR n2.id IN (WITH RECURSIVE up(id) AS (
-                                             SELECT n1.parent_id FROM asset_nodes n1 WHERE n1.id=a.node_id
-                                             UNION ALL
-                                             SELECT n3.parent_id FROM asset_nodes n3 JOIN up ON n3.id=up.id WHERE n3.parent_id IS NOT NULL)
-                                           SELECT id FROM up)))
-                              OR (p.asset_or_node_type='node' AND p.asset_or_node_id IN (
-                                    SELECT x.node_id FROM asset_extra_nodes x WHERE x.asset_id=a.id))))
+                              OR (p.asset_or_node_type='group' AND p.asset_or_node_id IN (
+                                    SELECT m.group_id FROM asset_group_map m WHERE m.asset_id=a.id))))
               ORDER BY a.id LIMIT 300"""
     return utils.ok(utils.query(sql, args))
 

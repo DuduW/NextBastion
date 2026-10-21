@@ -134,6 +134,7 @@
       <div class="nav-group">管理</div>
       <div class="nav-item" data-page="assets" data-roles="admin"><span class="ic">🗂️</span>资产管理</div>
       <div class="nav-item" data-page="nodes" data-roles="admin"><span class="ic">🌲</span>节点管理</div>
+      <div class="nav-item" data-page="assetgroups" data-roles="admin"><span class="ic">🗃️</span>资产分组</div>
       <div class="nav-item" data-page="policies" data-roles="admin"><span class="ic">🔐</span>授权管理</div>
       <div class="nav-item" data-page="users" data-roles="admin"><span class="ic">👥</span>用户管理</div>
       <div class="nav-item" data-page="roles" data-roles="admin"><span class="ic">🎭</span>角色管理</div>
@@ -375,7 +376,7 @@ async assets(){
     <td>${parseLabels(a.labels).map(l=>`<span class="lbl">${esc(l)}</span>`).join('')||'-'}</td>
     <td>${protoBadge(a.protocol)}</td><td class="mono">${a.protocol}:${a.protocol==='rdp'?a.rdp_port:a.ssh_port}</td>
     <td>${a.account?`<span class="mono">${esc(a.account)}</span>${a.account_count>1?` <span class="badge badge-gray">+${a.account_count-1}</span>`:''}${badge('已托管','green')}`:badge('未托管','red')}</td>
-    <td>${esc(a.node_name)}${a.extra_node_count?`<span class="badge badge-blue" style="margin-left:4px;font-size:10.5px">+${a.extra_node_count}</span>`:''}</td>
+    <td>${esc(a.node_name)}</td>
     <td class="st-cell" id="st-${a.id}">${a.status==='online'?badge('在线','green'):a.status==='offline'?badge('离线','red'):badge('未知','gray')}</td>
     <td style="white-space:nowrap">
       <button class="btn btn-sm btn-ghost" onclick="probeAsset(${a.id},this)">探测</button>
@@ -406,6 +407,25 @@ async assets(){
   <div id="assets-table">${rows.length?`<table id="a-tbl"><thead><tr><th style="width:34px"></th><th>主机名</th><th>IP</th><th>系统</th><th>分组</th><th>协议</th><th>端口</th><th>托管账号</th><th>节点</th><th>状态</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">无资产，点击右上角新建</div>'}</div></div>`;
 },
 // ===== 节点管理（所属节点树）=====
+async assetgroups(){
+  if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
+  const [groups,assets]=await Promise.all([api('/asset-groups'),api('/assets')]);
+  window.__agAssets=assets;
+  const aidName={}; assets.forEach(a=>aidName[a.id]=a.hostname+' ('+a.ip+')');
+  const tr=groups.map(g=>{
+    const members=assets.filter(a=>a.group_ids&&a.group_ids.includes(g.id)).map(a=>a.hostname);
+    return `<tr><td><b>${esc(g.name)}</b></td>
+    <td class="hint">${esc(g.comment||'-')}</td>
+    <td>${members.length?members.slice(0,4).map(m=>`<span class="lbl">${esc(m)}</span>`).join('')+(members.length>4?`<span class="hint"> +${members.length-4}</span>`:''):''}</td>
+    <td><span class="badge badge-blue">${members.length} 台</span></td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-sm btn-ghost" onclick="assetGroupForm(${g.id})">编辑</button>
+      <button class="btn btn-sm btn-danger" onclick="delAssetGroup(${g.id},'${esc(g.name)}')">删除</button>
+    </td></tr>`}).join('');
+  return `<div class="page-head"><div><h2>资产分组</h2><div class="sub">跨节点的资产集合 · 一台资产可属多个分组 · 授权目标之一（共 ${groups.length} 个分组）</div></div>
+    <button class="btn btn-primary" onclick="assetGroupForm()">+ 新建分组</button></div>
+  <div class="card">${groups.length?`<table><thead><tr><th>分组名</th><th>备注</th><th>成员</th><th>数量</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无分组</div>'}</div>`;
+},
 async nodes(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
   const [nodes,assets]=await Promise.all([api('/nodes'),api('/assets')]);
@@ -431,7 +451,7 @@ async nodes(){
       </div>${kids}`;
     }).join('');
   };
-  return `<div class="page-head"><div><h2>节点管理</h2><div class="sub">资产所属节点树 · 授权可挂节点（父节点授权覆盖全部子树，共 ${nodes.length} 个节点 / ${totalAssets} 台资产）</div></div>
+  return `<div class="page-head"><div><h2>节点管理</h2><div class="sub">资产归属树（每台资产只归一个节点）· 授权请使用 资产分组 或 单个资产 · 共 ${nodes.length} 个节点 / ${totalAssets} 台资产</div></div>
     <button class="btn btn-primary" onclick="nodeForm(null,'sub')">+ 新建根级节点</button></div>
   <div class="card" style="max-height:70vh;overflow:auto">${tree(null,0)||'<div class="empty">无节点</div>'}</div>
   <style>
@@ -444,7 +464,7 @@ async policies(){
   if(!['admin','auditor'].includes(USER.role))return '<div class="card empty">无权访问</div>';
   const rows=await api('/policies');
   const tr=rows.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.user_or_group_type==='user'?'用户: ':'组: '}${esc(p.user_or_group_name)}</td>
-    <td>${p.asset_or_node_type==='asset'?'资产: ':'节点: '}${esc(p.asset_or_node_name)}</td><td class="mono">${esc(p.account_pattern)}</td>
+    <td>${p.asset_or_node_type==='asset'?'资产: ':'分组: '}${esc(p.asset_or_node_name)}</td><td class="mono">${esc(p.account_pattern)}</td>
     <td>${p.valid_until?esc(String(p.valid_until).slice(0,16).replace('T',' ')):'长期'}</td>
     <td>${p.is_enabled?badge('生效','green'):badge('停用','red')}</td>
     <td style="white-space:nowrap">
@@ -1080,7 +1100,8 @@ async function assetForm(id){
   let title='新建资产';
   if(id){
     const rows=await api('/assets');a=rows.find(x=>x.id===id)||a;a.labels_arr=parseLabels(a.labels);title='编辑资产 · '+a.hostname;
-    try{a.extra_nodes=await api('/assets/'+id+'/extra-nodes')}catch(e){a.extra_nodes=[]}
+    try{a.group_ids=await api('/assets/'+id+'/groups')}catch(e){a.group_ids=[]}
+  window.__agGroups=await api('/asset-groups');
   }
   openModal(`
   <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
@@ -1095,7 +1116,7 @@ async function assetForm(id){
     ${mRow('SSH 端口','<input id="m-sshport" type="number" value="'+a.ssh_port+'">')}
     ${mRow('RDP 端口','<input id="m-rdpport" type="number" value="'+a.rdp_port+'">')}
     ${mRow('所属节点','<select id="m-node">'+nodeOpts+'</select>')}
-    ${mRow('附属节点',`<div id="m-extra-wrap" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><div id="m-extra-chips" style="display:flex;gap:4px;flex-wrap:wrap"></div><select id="m-extra-add" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text)" onchange="addExtraNode(this)"><option value="">＋ 添加节点…</option></select></div><div class="hint">授权命中主节点链或任一附属节点链均生效（多节点归属）</div>`)}
+    ${mRow('所属分组（可多选）',`<div id="m-extra-wrap" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><div id="m-extra-chips" style="display:flex;gap:4px;flex-wrap:wrap"></div><select id="m-extra-add" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text)" onchange="addGroupSel(this)"><option value="">＋ 添加分组…</option></select></div><div class="hint">一台资产可属多个分组；授权按 分组 或 单个资产 生效</div>`)}
     ${mRow('托管账号','<div style="display:flex;gap:8px;align-items:center"><input id="m-account" value="'+esc(a.account||'root')+'" placeholder="root / administrator" style="flex:1">'+(id&&a.account?`<button class="btn btn-ghost" style="white-space:nowrap;color:#cf1322;border-color:#cf1322" onclick="unManageAccount(${id},'${esc(a.account)}')">取消托管</button>`:'')+'</div><div class="hint">'+(id?(a.account?`已托管账号：<b class="mono">${esc(a.account)}</b>（凭据加密存储，不可查看；取消托管后连接时需手动输入账密）`:'⚠ 尚未托管账号，填入账号密码后将自动创建'):'凭据由堡垒机加密托管，运维全程不可见')+'</div>')}
     ${mRow('账号密码',`<input id="m-password" type="password" placeholder="${id?(a.account?'留空则不修改':'设置初始密码'):'初始密码'}">`)}
   </div>
@@ -1104,8 +1125,8 @@ async function assetForm(id){
     <button class="btn btn-primary" onclick="saveAsset(${id||0})">${id?'保存修改':'创 建'}</button>
   </div>`);
   document.getElementById('m-node').value=a.node_id;
-  window.__extraSel=new Set(a.extra_nodes||[]);
-  renderExtraChips();
+  window.__grpSel=new Set(a.group_ids||[]);
+  renderGrpChips();
   // 系统下拉回显：已知值选中，未知值落"其他"并填入输入框
   const osSel=document.getElementById('m-os');
   const osOther=document.getElementById('m-os-other');
@@ -1121,21 +1142,22 @@ function osOtherToggle(){
   if(!sel||!other)return;
   other.style.display=sel.value==='__other__'?'':'none';
 }
-function renderExtraChips(){
+function renderGrpChips(){
   const box=document.getElementById('m-extra-chips');if(!box)return;
   const sel=document.getElementById('m-extra-add');
-  box.innerHTML=[...window.__extraSel].map(id=>{
-    const n=(window.__nodesCache||[]).find(x=>x.id===id);
-    return `<span data-nid="${id}" style="display:inline-flex;gap:5px;align-items:center;background:var(--primary-light);color:var(--primary);border-radius:8px;padding:2px 9px;font-size:11.5px">${esc(n?n.name:('#'+id))} <b style="cursor:pointer" onclick="delExtraNode(${id})">✕</b></span>`;
+  box.innerHTML=[...(window.__grpSel||[])].map(id=>{
+    const g=(window.__agGroups||[]).find(x=>x.id===id);
+    return `<span data-gid="${id}" style="display:inline-flex;gap:5px;align-items:center;background:var(--primary-light);color:var(--primary);border-radius:8px;padding:2px 9px;font-size:11.5px">🗃️ ${esc(g?g.name:('#'+id))} <b style="cursor:pointer" onclick="rmGrp(${id})">✕</b></span>`;
   }).join('');
   if(sel){
-    sel.innerHTML='<option value="">＋ 添加节点…</option>'+
-      (window.__nodesCache||[]).filter(n=>!window.__extraSel.has(n.id)&&n.id!==+document.getElementById('m-node').value)
-      .map(n=>`<option value="${n.id}">${esc(n.name)}</option>`).join('');
+    sel.innerHTML='<option value="">＋ 添加分组…</option>'+
+      (window.__agGroups||[]).filter(g=>!(window.__grpSel||[]).has(g.id))
+      .map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
   }
 }
-function addExtraNode(sel){const v=+sel.value;if(v){window.__extraSel.add(v);renderExtraChips()}}
-function delExtraNode(id){window.__extraSel.delete(id);renderExtraChips()}
+function addGroupSel(sel){const v=+sel.value;if(v){window.__grpSel.add(v);sel.value='';renderGrpChips()}}
+function rmGrp(gid){window.__grpSel.delete(gid);renderGrpChips()}
+
 
 function devTypeSwitch(){
   const v=document.getElementById('m-devtype').value;
@@ -1172,7 +1194,7 @@ async function saveAsset(id){
     account:document.getElementById('m-account').value.trim(),
     password:document.getElementById('m-password').value||undefined,
     device_type:((document.getElementById('m-devtype'))||{}).value||'linux',
-    extra_nodes:[...(window.__extraSel||[])],
+    group_ids:[...(window.__grpSel||[])],
     enable_password:((document.getElementById('m-enablepw'))||{}).value||undefined
   };
   if(!body.hostname||!body.ip){toast('主机名与 IP 必填');return}
@@ -1250,10 +1272,10 @@ async function unManageAccount(id,account){
 
 // ============ 策略表单（新建/编辑） ============
 async function policyForm(id){
-  const [users,groups,assets,nodes,filters]=await Promise.all([
-    api('/users'),api('/users/groups'),api('/assets'),api('/nodes'),api('/filters')]);
-  window.__policyCtx={users,groups,assets,nodes,filters};
-  let p={name:'',user_type:'group',user_id:((groups[0])||{}).id,asset_type:'node',asset_id:((nodes[1])||{}).id||((nodes[0])||{}).id,
+  const [users,groups,assets,nodes,filters,agroups]=await Promise.all([
+    api('/users'),api('/users/groups'),api('/assets'),api('/nodes'),api('/filters'),api('/asset-groups')]);
+  window.__policyCtx={users,groups,assets,nodes,filters,agroups};
+  let p={name:'',user_type:'group',user_id:((groups[0])||{}).id,asset_type:'group',asset_id:((agroups[0])||{}).id,
          account_pattern:'*',command_filter_id:((filters[0])||{}).id||1,valid_until:'',rdp:{clipboard:false,drive:false,watermark:true,sftp:false}};
   let title='新建授权策略';
   if(id){
@@ -1269,7 +1291,7 @@ async function policyForm(id){
   <div class="modal-body">
     ${mRow('策略名 *','<input id="p-name" value="'+esc(p.name)+'" placeholder="如 INFRA-生产-全时">')}
     ${mRow('授权对象','<select id="p-utype" onchange="tgtSwitch()"><option value="group" '+(p.user_type!=='user'?'selected':'')+'>用户组</option><option value="user" '+(p.user_type==='user'?'selected':'')+'>用户</option></select><select id="p-uid"></select>')}
-    ${mRow('目标范围','<select id="p-atype" onchange="tgtSwitch()"><option value="node" '+(p.asset_type!=='asset'?'selected':'')+'>资产节点</option><option value="asset" '+(p.asset_type==='asset'?'selected':'')+'>单个资产</option></select><select id="p-aid"></select>')}
+    ${mRow('目标范围','<select id="p-atype" onchange="tgtSwitch()"><option value="group" '+(p.asset_type!=='asset'?'selected':'')+'>资产分组</option><option value="asset" '+(p.asset_type==='asset'?'selected':'')+'>单个资产</option></select><select id="p-aid"></select>')}
     ${mRow('账号匹配','<input id="p-acct" value="'+esc(p.account_pattern)+'" class="mono" placeholder="* / root / app*">')}
     ${mRow('命令过滤','<select id="p-filter">'+fOpts+'</select><div class="hint">SSH 会话生效；RDP 会话不适用命令过滤</div>')}
     ${mRow('有效期至','<input id="p-valid" type="datetime-local" value="'+esc((p.valid_until||'').toString().slice(0,16))+'"><div class="hint">留空 = 长期有效（临时授权可设过期，到期自动失效）</div>')}
@@ -1295,13 +1317,49 @@ async function policyForm(id){
   tgtSwitch(p.user_id,p.asset_id);
   document.getElementById('p-filter').value=p.command_filter_id||1;
 }
+// ===== V2.2 资产分组 =====
+async function assetGroupForm(id){
+  const [groups,assets]=await Promise.all([api('/asset-groups'),api('/assets')]);
+  const g=id?groups.find(x=>x.id===id):null;
+  let memberIds=[];
+  if(g){
+    try{memberIds=await api('/assets/'+id+'/groups')}catch(e){memberIds=[]}
+    // 上面返回的是 asset 的组——这里需要组的资产：直接用 assets 过滤
+  }
+  memberIds=assets.filter(a=>a.group_ids&&a.group_ids.includes(id)).map(a=>a.id);
+  const opts=assets.map(a=>`<label style="display:flex;gap:6px;align-items:center;padding:2px 0">
+    <input type="checkbox" class="ag-m" value="${a.id}" ${memberIds.includes(a.id)?'checked':''}>
+    ${esc(a.hostname)} <span class="hint mono">${esc(a.ip)}</span></label>`).join('');
+  openModal(`
+  <div class="modal-head"><b>${id?'编辑分组 · '+(g?esc(g.name):''):'新建资产分组'}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body">
+    ${mRow('分组名 *','<input id="ag-name" value="'+(g?esc(g.name):'')+'" placeholder="如 生产-核心交换机">')}
+    ${mRow('备注','<input id="ag-comment" value="'+(g?esc(g.comment||''):'')+'" placeholder="用途说明">')}
+    ${mRow('成员资产（多选）','<div class="m-check" style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px">'+opts+'</div>')}
+  </div>
+  <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary" onclick="saveAssetGroup(${id||0})">${id?'保存':'创 建'}</button></div>`);
+}
+async function saveAssetGroup(id){
+  const name=document.getElementById('ag-name').value.trim();
+  if(!name){toast('分组名必填');return}
+  const ids=[...document.querySelectorAll('.ag-m:checked')].map(x=>+x.value);
+  try{
+    await api('/asset-groups'+(id?('/'+id):''),{method:id?'PUT':'POST',body:JSON.stringify({name,comment:document.getElementById('ag-comment').value.trim(),asset_ids:ids})});
+    toast(id?'分组已更新':'分组已创建');closeModal();loadPage();
+  }catch(e){toast('保存失败：'+e.message)}
+}
+async function delAssetGroup(id,name){
+  if(!confirm(`删除分组「${name}」？资产不受影响，仅解除组关系。`))return;
+  try{await api('/asset-groups/'+id,{method:'DELETE'});toast('已删除');loadPage()}catch(e){toast(e.message)}
+}
 function tgtSwitch(keepUid,keepAid){
   const ctx=window.__policyCtx;if(!ctx)return;
   const ut=document.getElementById('p-utype').value,at=document.getElementById('p-atype').value;
   const uid=document.getElementById('p-uid'),aid=document.getElementById('p-aid');
   const fill=(sel,list,val)=>{sel.innerHTML=list.map(x=>`<option value="${x.id}">${esc(x.name||x.hostname||x.username)}${x.ip?' ('+esc(x.ip)+')':''}</option>`).join('');if(val)sel.value=val;};
   fill(uid,ut==='group'?ctx.groups:ctx.users,keepUid||uid.value);
-  fill(aid,at==='node'?ctx.nodes:ctx.assets,keepAid||aid.value);
+  fill(aid,at==='group'?(ctx.agroups||[]):ctx.assets,keepAid||aid.value);
 }
 async function savePolicy(id){
   const body={
