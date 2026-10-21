@@ -1303,7 +1303,7 @@ async function policyForm(id){
     ${mRow('SSH 文件传输',`<div class="m-check">
       <label><span class="switch"><input type="checkbox" id="p-sftp" ${p.rdp.sftp?'checked':''}><span class="sl"></span></span>允许 Web SFTP 文件管理</label>
     </div><div class="hint">默认关闭——勾选后用户方可在 SSH 会话中使用「📁 文件」（上传/下载留审计副本）</div>`)}
-    ${mRow('MySQL 权限级别',`<div class="m-check" style="margin-bottom:6px"><label><span class="switch"><input type="checkbox" id="p-sqlcap" ${p.rdp.sql?'checked':''}><span class="sl"></span></span>允许数据库访问（MySQL Web 终端）</label></div><select id="p-sqllevel">
+    ${mRow('MySQL 权限级别',`<div class="m-check" style="margin-bottom:6px"><label><span class="switch"><input type="checkbox" id="p-sqlcap" ${p.rdp.sql?'checked':''}><span class="sl"></span></span>允许数据库访问（MySQL Web 终端）</label></div><select id="p-sqllevel" onchange="if(this.value)document.getElementById('p-sqlcap').checked=true">
       <option value="1" ${(p.rdp.sql_rw_level||1)==1?'selected':''}>L1 · 只读（SELECT/SHOW/DESC）</option>
       <option value="2" ${(p.rdp.sql_rw_level||0)==2?'selected':''}>L2 · 读 + 增（INSERT）</option>
       <option value="3" ${(p.rdp.sql_rw_level||0)==3?'selected':''}>L3 · 读 + 增 + 改（UPDATE）</option>
@@ -1381,6 +1381,7 @@ async function savePolicy(id){
     }
   };
   if(!body.name){toast('策略名必填');return}
+  if(!body.rdp_session_config.sql && +document.getElementById('p-sqllevel').value>1){toast('已选择 MySQL 权限级别，请先勾选「允许数据库访问」开关');return}
   try{
     await api('/policies'+(id?('/'+id):''),{method:id?'PUT':'POST',body:JSON.stringify(body)});
     toast(id?'策略已更新':'策略已创建');closeModal();loadPage();
