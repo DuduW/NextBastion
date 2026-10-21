@@ -541,6 +541,7 @@ async mytasks(){
     <td>${typeBadge(t.type)}</td>
     <td class="hint">${JSON.parse(t.asset_ids||'[]').length} 台资产</td>
     <td class="mono">${esc(t.cron_expr)}</td>
+    <td class="hint">${t.type==='backup'?(t.retention_count?('保留 '+t.retention_count+' 份'+(t.retention_daily?'+日末':'')):'-'):(t.type==='inspect'?'阈值判定':'—')}</td>
     <td>${t.last_status==='success'?badge('成功','green'):t.last_status==='partial'?badge('部分','orange'):t.last_status==='fail'?badge('失败','red'):t.last_status?'<span class="hint">-</span>':'<span class="hint">未执行</span>'} ${t.last_at?`<span class="hint">${esc(String(t.last_at).slice(5,16))}</span>`:''}</td>
     <td><span class="switch" style="cursor:pointer" onclick="toggleTask(${t.id},${t.enabled?0:1})"><span class="sl ${t.enabled?'on':''}"></span></span></td>
     <td style="white-space:nowrap">
@@ -549,7 +550,7 @@ async mytasks(){
     </td></tr>`).join('');
   return `<div class="page-head"><div><h2>我的任务</h2><div class="sub">仅本人可见 · Linux 脚本 / 交换机备份 / 巡检（数据在 我的资产 → 主机名 查看）</div></div>
     <button class="btn btn-primary" onclick="taskForm()">＋ 新建任务</button></div>
-  <div class="card">${rows.length?`<table><thead><tr><th>任务</th><th>类型</th><th>目标</th><th>Cron</th><th>上次执行</th><th>启用</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无任务 · 点击右上角新建</div>'}</div>`;
+  <div class="card">${rows.length?`<table><thead><tr><th>任务</th><th>类型</th><th>目标</th><th>Cron</th><th>策略</th><th>上次执行</th><th>启用</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无任务 · 点击右上角新建</div>'}</div>`;
 },
 async settings(){
   if(USER.role!=='admin')return '<div class="card empty">无权访问</div>';
@@ -1680,6 +1681,7 @@ async function taskForm(){
       (myAssets||[]).map(a=>`<label style="display:flex;gap:6px;align-items:center;padding:2px 0"><input type="checkbox" value="${a.id}"> ${esc(a.hostname)} <span class="hint mono">${esc(a.ip)}</span></label>`).join('')+'</div>')}
     <div id="tk-script-row">${mRow('脚本内容（{{hostname}}/{{ip}} 变量）','<textarea id="tk-script" rows="5" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="df -h | tail -n +2 | awk \'$5+0>=90\'"></textarea>')}</div>
     <div id="tk-th-row" style="display:none">${mRow('巡检阈值','<div style="display:flex;gap:8px"><input id="tk-cpu" type="number" value="80" style="width:100%" placeholder="CPU%"><input id="tk-mem" type="number" value="80" style="width:100%" placeholder="内存%"><input id="tk-temp" type="number" value="40" style="width:100%" placeholder="温度°C"></div>')}</div>
+    <div id="tk-ret-row" style="display:none">${mRow('备份保留策略','<div style="display:flex;gap:8px;align-items:center"><input id="tk-ret-n" type="number" value="30" style="width:90px"> <span class="hint">份/设备</span> <label style="display:flex;gap:4px;align-items:center;margin-left:8px"><input id="tk-ret-daily" type="checkbox" checked> <span class="hint">每日末份永久保留</span></label></div>')}</div>
     ${mRow('Cron 调度 *','<div style="display:flex;gap:8px"><select id="tk-cron-t" onchange="document.getElementById(\'tk-cron\').value=this.value"><option value="0 2 * * *">每天 02:00</option><option value="30 8 * * *">每天 08:30</option><option value="0 * * * *">每小时</option><option value="0 9 * * 1">每周一 09:00</option></select><input id="tk-cron" value="0 2 * * *" style="font-family:var(--mono)"></div>')}
     ${mRow('告警时机','<select id="tk-notify"><option value="fail">失败时</option><option value="fail,change">失败 + 配置变更</option><option value="fail,change,alarm">失败 + 变更 + 巡检异常</option></select>')}
   </div>
@@ -1691,6 +1693,7 @@ function taskTypeSwitch(){
   const t=document.getElementById('tk-type').value;
   document.getElementById('tk-script-row').style.display=t==='script'?'':'none';
   document.getElementById('tk-th-row').style.display=t==='inspect'?'':'none';
+  document.getElementById('tk-ret-row').style.display=t==='backup'?'':'none';
 }
 async function saveTask(runNow){
   const ids=[...document.querySelectorAll('#tk-assets input:checked')].map(x=>+x.value);
@@ -1701,6 +1704,11 @@ async function saveTask(runNow){
     notify_on:document.getElementById('tk-notify').value};
   if(type==='inspect'){
     body.thresholds={cpu:+document.getElementById('tk-cpu').value||80,mem:+document.getElementById('tk-mem').value||80,temp:+document.getElementById('tk-temp').value||40};
+  }
+  if(type==='backup'){
+    const rn=+document.getElementById('tk-ret-n')?.value||0;
+    body.retention_count=rn>0?rn:null;
+    body.retention_daily=!!document.getElementById('tk-ret-daily')?.checked;
   }
   try{
     const r=await api('/tasks',{method:'POST',body:JSON.stringify(body)});
@@ -1732,6 +1740,21 @@ async function assetDataDrawer(aid,hostname){
         <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">配置版本</div><div class="value">${ov.snapshots??'-'}</div></div>
         <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">巡检异常次</div><div class="value">${ov.inspections_unhealthy??'-'}</div></div>
       </div>
+      ${ov.health?`
+      <div style="border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin-top:10px">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <b style="font-size:13px">🩺 最新健康</b>
+          ${ov.health.offline?badge('离线（连续 '+ov.health.fail_streak+' 次失败）','red'):(ov.health.healthy?badge('健康','green'):badge('异常','orange'))}
+          ${ov.health.created_at?`<span class="hint mono">${esc(String(ov.health.created_at).slice(5,16))}</span>`:''}
+          ${ov.health.uptime?`<span class="hint">运行 ${esc(String(ov.health.uptime).slice(0,24))}</span>`:''}
+        </div>
+        <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+          <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">CPU</div><div class="value" style="${ov.health.cpu_pct!=null&&ov.health.cpu_pct>80?'color:var(--red)':''}">${ov.health.cpu_pct!=null?ov.health.cpu_pct+'%':'-'}</div></div>
+          <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">内存</div><div class="value" style="${ov.health.mem_pct!=null&&ov.health.mem_pct>80?'color:var(--red)':''}">${ov.health.mem_pct!=null?ov.health.mem_pct+'%':'-'}</div></div>
+          <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">温度</div><div class="value" style="${ov.health.temp_max!=null&&ov.health.temp_max>40?'color:var(--red)':''}">${ov.health.temp_max!=null?ov.health.temp_max+'°C':'-'}</div></div>
+          <div class="card stat" style="box-shadow:none;border:1px solid var(--border)"><div class="label">端口</div><div class="value">${ov.health.ports_down!=null?ov.health.ports_down+' 跌/'+ov.health.ports_total:'-'}</div></div>
+        </div>
+      </div>`:''}
       <div class="hint" style="margin-top:8px">${ov.last_run?`最近执行 ${esc(String(ov.last_run).slice(5,16))}`:'暂无执行记录'}${ov.last_snapshot?` · 最近备份 ${esc(String(ov.last_snapshot).slice(5,16))}`:''}</div>
     </div>
     <div id="ad-1" style="display:none"><div class="hint">加载中…</div></div>
@@ -1758,13 +1781,35 @@ async function adLoadBackups(){
   try{
     const rows=await api(`/my/assets/${window.__adAid}/backups`);
     const el=document.getElementById('ad-2');if(!el)return;
-    el.innerHTML=rows.length?`<table><thead><tr><th>版本</th><th>时间</th><th>大小</th><th>变更</th><th>操作</th></tr></thead><tbody>`+
-      rows.map(b=>`<tr><td class="mono">#${b.id}</td><td class="hint mono">${esc(String(b.created_at).slice(5,16))}</td>
-      <td class="hint">${(b.size/1024).toFixed(1)}KB</td>
-      <td>${b.changed?badge('有变更','orange'):badge('无','gray')}</td>
-      <td><button class="btn btn-sm btn-ghost" onclick="adDiff(${b.id})">对比上版</button>
-      <a class="btn btn-sm btn-ghost" style="text-decoration:none" href="/api/v1/my/assets/${window.__adAid}/backups/${b.id}/download?token=${TOKEN}" target="_blank">⬇ 下载</a></td></tr>`).join('')+`</tbody></table><div id="ad-diff" style="margin-top:10px"></div>`:'<div class="empty">暂无备份（需创建交换机备份任务）</div>';
+    window.__adSnaps=rows;
+    el.innerHTML=rows.length?`<div class="hint" style="margin-bottom:8px">勾选两版可对比（<b>vA → vB</b>，红色为旧版）</div>
+      <table><thead><tr><th style="width:30px"></th><th>版本</th><th>来源</th><th>时间</th><th>大小</th><th>变更</th><th>操作</th></tr></thead><tbody>`+
+      rows.map(b=>`<tr><td><input type="radio" name="ad-sel-a" value="${b.id}" onchange="adDiff2Pick()"></td>
+      <td class="mono">v${b.version_no??b.id}</td>
+      <td>${b.trigger_type==='scheduled'?badge('定时','blue'):b.trigger_type==='manual'?badge('手动','gray'):badge(b.trigger_type||'-','gray')}</td>
+      <td class="hint mono">${esc(String(b.created_at).slice(5,16))}</td>
+      <td class="hint">${b.fail_reason?'-':((b.size||0)/1024).toFixed(1)+'KB'}</td>
+      <td>${b.fail_reason?badge('失败·'+b.fail_reason,'red'):(b.changed?badge('有变更 +'+(b.diff_added??'-')+'/-'+(b.diff_removed??'-'),'orange'):badge('无','gray'))}</td>
+      <td>${b.fail_reason?'':`<button class="btn btn-sm btn-ghost" onclick="adDiff(${b.id})">对比上版</button>
+      <a class="btn btn-sm btn-ghost" style="text-decoration:none" href="/api/v1/my/assets/${window.__adAid}/backups/${b.id}/download?token=${TOKEN}" target="_blank">⬇ 下载</a>`}</td></tr>`).join('')+
+      `</tbody></table>
+      <div style="margin-top:8px"><button class="btn btn-sm btn-primary" id="ad-diff2-btn" disabled onclick="adDiff2Go()">⇄ 对比勾选的两版</button></div>
+      <div id="ad-diff" style="margin-top:10px"></div>`:'<div class="empty">暂无备份（需创建交换机备份任务）</div>';
   }catch(e){}
+}
+function adDiff2Pick(){
+  const n=document.querySelectorAll('input[name=ad-sel-a]:checked').length;
+  const b=document.getElementById('ad-diff2-btn');if(b)b.disabled=n!==2;
+}
+async function adDiff2Go(){
+  const ids=[...document.querySelectorAll('input[name=ad-sel-a]:checked')].map(x=>+x.value);
+  if(ids.length!==2)return;
+  try{
+    const d=await api(`/my/assets/${window.__adAid}/backups/diff2?a=${ids[0]}&b=${ids[1]}`);
+    const el=document.getElementById('ad-diff');
+    const html=d.diff.split('\n').map(l=>l.startsWith('+')?`<div style="background:var(--badge-green-bg);color:var(--badge-green-tx);padding:1px 10px;font-family:var(--mono);font-size:11.5px">${esc(l)}</div>`:l.startsWith('-')?`<div style="background:var(--badge-red-bg);color:var(--badge-red-tx);padding:1px 10px;font-family:var(--mono);font-size:11.5px">${esc(l)}</div>`:`<div style="padding:1px 10px;font-family:var(--mono);font-size:11.5px;color:var(--text-3)">${esc(l)}</div>`).join('');
+    el.innerHTML=`<b style="font-size:12px">v${d.a.version_no} → v${d.b.version_no}（+${d.added}/-${d.removed} 行）</b><div style="border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:320px">${html||'<div class="hint" style="padding:10px">无差异</div>'}</div>`;
+  }catch(e){toast('对比失败：'+e.message)}
 }
 async function adDiff(snapId){
   try{
@@ -1779,12 +1824,24 @@ async function adLoadInspections(){
     const rows=await api(`/my/assets/${window.__adAid}/inspections`);
     const el=document.getElementById('ad-3');if(!el)return;
     el.innerHTML=rows.length?rows.map(r=>{
-      const d=r.detail||{};const items=d.items||[];
+      const items=r.items||[];
+      const metric=(label,v,unit,th_,warnHi)=>`<div class="card stat" style="box-shadow:none;border:1px solid var(--border);min-width:0">
+        <div class="label">${label}</div><div class="value" style="${v==null?'':(v>warnHi?'color:var(--red)':'')}">${v==null?'-':v+unit}</div>
+        ${th_?`<div class="hint" style="font-size:10px">阈值 ${th_}</div>`:''}</div>`;
       return `<div style="border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin-bottom:10px">
         <div style="display:flex;gap:8px;align-items:center"><b>${esc(r.task_name)}</b>
-        ${d.healthy?badge('健康','green'):badge('异常','orange')}
-        <span class="hint mono">${esc(String(r.started_at).slice(5,16))}</span></div>
-        ${items.map(i=>`<div style="font-size:12px;margin-top:4px">${i.level==='ok'?'✅':'⚠️'} <b>${esc(i.name)}</b> <span class="hint">${esc(i.detail)}</span></div>`).join('')}
+        ${r.healthy?badge('健康','green'):badge('异常','orange')}
+        ${r.vrp?`<span class="hint mono">${esc(r.vrp)}</span>`:''}
+        <span class="hint mono">${esc(String(r.created_at).slice(5,16))}</span></div>
+        <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-top:8px">
+          ${metric('CPU',r.cpu_pct,'%','80%',80)}
+          ${metric('内存',r.mem_pct,'%','80%',80)}
+          ${metric('温度',r.temp_max,'°C','40°C',40)}
+          ${metric('端口 DOWN',r.ports_down,'/',null,null)}
+        </div>
+        ${items.length?`<details style="margin-top:6px"><summary class="hint">解析明细（${items.length} 项）</summary>`+
+          items.map(i=>`<div style="font-size:12px;margin-top:4px">${i.level==='ok'?'✅':'⚠️'} <b>${esc(i.name)}</b> <span class="hint">${esc(i.detail)}</span></div>`).join('')+`</details>`:''}
+        ${(r.alarms||[]).length?`<div style="font-size:12px;margin-top:6px">⚠️ <b>告警</b>：${r.alarms.map(esc).join('；')}</div>`:''}
       </div>`}).join(''):'<div class="empty">暂无巡检报告（需创建交换机巡检任务）</div>';
   }catch(e){}
 }

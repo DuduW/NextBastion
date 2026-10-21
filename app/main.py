@@ -2430,16 +2430,18 @@ async def task_create(request: Request, p=Depends(auth)):
             valid_ids.append(aid)
     if not valid_ids:
         raise HTTPException(400, "无本人授权资产（选择器范围外的资产被剔除后为空）")
+    rc = b.get("retention_count")
+    rc = min(365, max(1, int(rc))) if rc not in (None, "", 0) else None
     tid = utils.execute(
-        "INSERT INTO tasks (name,type,asset_ids,script_text,commands,cron_expr,enabled,timeout_s,notify_on,thresholds,owner_id) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        "INSERT INTO tasks (name,type,asset_ids,script_text,commands,cron_expr,enabled,timeout_s,notify_on,thresholds,owner_id,retention_count,retention_daily) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (name, type_, json.dumps(valid_ids), b.get("script_text"),
          json.dumps(b.get("commands")) if b.get("commands") else None,
          cron_expr, 1 if b.get("enabled", 1) else 0,
          min(600, max(30, int(b.get("timeout_s") or 120))),
          _sanitize_text(b.get("notify_on") or "fail", 64),
          json.dumps(b.get("thresholds")) if b.get("thresholds") else None,
-         p["sub"]))
+         p["sub"], rc, 1 if b.get("retention_daily") else 0))
     write_audit(p['username'], 'task_create', 'task', tid, {'name': name, 'type': type_})
     return utils.ok({"id": tid})
 
@@ -2466,6 +2468,12 @@ async def task_update(tid: int, request: Request, p=Depends(auth)):
         sets.append("notify_on=%s"); args.append(_sanitize_text(b["notify_on"], 64))
     if "thresholds" in b:
         sets.append("thresholds=%s"); args.append(json.dumps(b["thresholds"]) if b["thresholds"] else None)
+    if "retention_count" in b:
+        rc = b["retention_count"]
+        rc = min(365, max(1, int(rc))) if rc not in (None, "", 0) else None
+        sets.append("retention_count=%s"); args.append(rc)
+    if "retention_daily" in b:
+        sets.append("retention_daily=%s"); args.append(1 if b["retention_daily"] else 0)
     if sets:
         args.append(tid); args.append(p["sub"])
         utils.execute(f"UPDATE tasks SET {','.join(sets)} WHERE id=%s AND owner_id=%s", args)
@@ -2515,9 +2523,17 @@ async def asset_task_overview(aid: int, p=Depends(auth)):
     tasks_n = utils.query("SELECT COUNT(*) n FROM tasks WHERE JSON_CONTAINS(asset_ids, CAST(%s AS JSON)) AND owner_id=%s", (str(aid), p["sub"]), one=True)
     last_run = utils.query("SELECT r.started_at FROM task_run_items i JOIN task_runs r ON i.run_id=r.id "
                            "WHERE i.asset_id=%s AND r.owner_id=%s ORDER BY r.id DESC LIMIT 1", (aid, p["sub"]), one=True)
+    hs = utils.query("SELECT vrp, uptime, cpu_pct, mem_pct, temp_max, ports_down, ports_total, healthy, created_at "
+                     "FROM health_snapshots WHERE asset_id=%s AND owner_id=%s ORDER BY id DESC LIMIT 1", (aid, p["sub"]), one=True)
+    streak = utils.query("SELECT fail_streak, last_ok_at FROM asset_health_streak WHERE asset_id=%s AND owner_id=%s",
+                         (aid, p["sub"]), one=True)
+    # 防抖判定：连续 >=3 次失败才标 offline（对齐 PRD F11）
+    offline = bool(streak and streak["fail_streak"] >= 3)
     return utils.ok({"snapshots": snaps["n"], "last_snapshot": snaps["last"],
                      "runs": runs["n"], "inspections_unhealthy": alarms["n"],
-                     "tasks": tasks_n["n"], "last_run": last_run["started_at"] if last_run else None})
+                     "tasks": tasks_n["n"], "last_run": last_run["started_at"] if last_run else None,
+                     "health": {**(hs or {}), "offline": offline, "fail_streak": streak["fail_streak"] if streak else 0,
+                                "last_ok_at": streak["last_ok_at"] if streak else None} if hs or streak else None})
 
 
 @app.get("/api/v1/my/assets/{aid}/runs")
@@ -2533,9 +2549,26 @@ async def asset_task_runs(aid: int, p=Depends(auth)):
 @app.get("/api/v1/my/assets/{aid}/backups")
 async def asset_task_backups(aid: int, p=Depends(auth)):
     _my_asset_or_404(aid, p)
-    rows = utils.query("SELECT id, hash, size, changed, created_at FROM config_snapshots "
-                       "WHERE asset_id=%s AND owner_id=%s ORDER BY id DESC LIMIT 100", (aid, p["sub"]))
+    rows = utils.query("SELECT id, version_no, trigger_type, hash, size, changed, diff_added, diff_removed, fail_reason, created_at "
+                       "FROM config_snapshots WHERE asset_id=%s AND owner_id=%s ORDER BY id DESC LIMIT 100", (aid, p["sub"]))
     return utils.ok(rows)
+
+
+@app.get("/api/v1/my/assets/{aid}/backups/diff2")
+async def asset_task_backup_diff2(aid: int, a: int, b: int, p=Depends(auth)):
+    """双版本 diff：a/b 为 snapshot id（对齐 PRD F5）"""
+    _my_asset_or_404(aid, p)
+    ra = utils.query("SELECT * FROM config_snapshots WHERE id=%s AND asset_id=%s AND owner_id=%s",
+                     (a, aid, p["sub"]), one=True)
+    rb = utils.query("SELECT * FROM config_snapshots WHERE id=%s AND asset_id=%s AND owner_id=%s",
+                     (b, aid, p["sub"]), one=True)
+    if not ra or not rb:
+        raise HTTPException(404, "版本不存在")
+    d = tasks_mod.diff_snapshots(ra["content"], rb["content"])
+    added, removed = tasks_mod.diff_line_counts(ra["content"], rb["content"])
+    return utils.ok({"a": {"id": a, "version_no": ra["version_no"], "created_at": ra["created_at"]},
+                     "b": {"id": b, "version_no": rb["version_no"], "created_at": rb["created_at"]},
+                     "diff": d, "added": added, "removed": removed})
 
 
 @app.get("/api/v1/my/assets/{aid}/backups/{snap_id}")
@@ -2580,15 +2613,17 @@ async def asset_task_backup_download(aid: int, snap_id: int, p=Depends(auth)):
 async def asset_task_inspections(aid: int, p=Depends(auth)):
     _my_asset_or_404(aid, p)
     rows = utils.query(
-        "SELECT i.detail, i.output, r.started_at, t.name task_name FROM task_run_items i "
-        "JOIN task_runs r ON i.run_id=r.id JOIN tasks t ON t.id=r.task_id "
-        "WHERE i.asset_id=%s AND r.owner_id=%s AND t.type='inspect' AND i.detail IS NOT NULL "
-        "ORDER BY r.id DESC LIMIT 50", (aid, p["sub"]))
+        "SELECT h.id, h.vrp, h.uptime, h.cpu_pct, h.mem_pct, h.temp_max, h.ports_down, h.ports_total, "
+        "h.interfaces_json, h.alarms_json, h.items_json, h.healthy, h.created_at, t.name task_name "
+        "FROM health_snapshots h JOIN tasks t ON t.id=h.task_id "
+        "WHERE h.asset_id=%s AND h.owner_id=%s ORDER BY h.id DESC LIMIT 50", (aid, p["sub"]))
     for r in rows:
-        try:
-            r["detail"] = json.loads(r["detail"])
-        except Exception:
-            pass
+        for k in ("interfaces_json", "alarms_json", "items_json"):
+            try:
+                r[k.replace("_json", "")] = json.loads(r[k]) if r[k] else []
+            except Exception:
+                r[k.replace("_json", "")] = []
+            del r[k]
     return utils.ok(rows)
 
 # ============================================================
