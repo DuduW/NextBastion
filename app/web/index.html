@@ -1112,7 +1112,7 @@ async function assetForm(id){
     ${mRow('设备类型',`<select id="m-devtype" onchange="devTypeSwitch()">${[['linux','🐧 Linux 服务器'],['huawei','🌐 华为交换机/路由器'],['h3c','🌐 H3C'],['cisco','🌐 思科'],['ruijie','🌐 锐捷'],['juniper','🌐 Juniper'],['mysql','🗄️ MySQL 数据库']].map(d=>`<option value="${d[0]}" ${(a.device_type||'linux')===d[0]?'selected':''}>${d[1]}</option>`).join('')}</select><div class="hint" id="m-devtype-hint"></div>`)}
     ${mRow('enable 密码（网络设备）',`<input id="m-enablepw" type="password" placeholder="双重认证升权密码（可选，AES 加密托管）">`)}
     ${mRow('操作系统',osSelectHtml(a.os_type))}
-    ${mRow('分组','<input id="m-labels" value="'+esc((a.labels_arr||[]).join(', '))+'" list="m-labels-list" placeholder="如: 生产, 数据库（逗号分隔可多选）"><datalist id="m-labels-list">'+(window.__allLabels||[]).map(l=>'<option value="'+esc(l)+'">').join('')+'</datalist><div class="hint">用于分类与搜索，多个分组用逗号分隔</div>')}
+    ${mRow('标签','<input id="m-labels" value="'+esc((a.labels_arr||[]).join(', '))+'" list="m-labels-list" placeholder="如: 生产, 数据库（逗号分隔，仅用于分类搜索）"><datalist id="m-labels-list">'+(window.__allLabels||[]).map(l=>'<option value="'+esc(l)+'">').join('')+'</datalist><div class="hint">⚠ 仅作分类标签；授权分组请在下方「所属分组」中选择</div>')}
     ${mRow('SSH 端口','<input id="m-sshport" type="number" value="'+a.ssh_port+'">')}
     ${mRow('RDP 端口','<input id="m-rdpport" type="number" value="'+a.rdp_port+'">')}
     ${mRow('所属节点','<select id="m-node">'+nodeOpts+'</select>')}
