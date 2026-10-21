@@ -1101,6 +1101,7 @@ async function assetForm(id){
   if(id){
     const rows=await api('/assets');a=rows.find(x=>x.id===id)||a;a.labels_arr=parseLabels(a.labels);title='编辑资产 · '+a.hostname;
     try{a.group_ids=await api('/assets/'+id+'/groups')}catch(e){a.group_ids=[]}
+  try{const accts=await api('/assets/'+id+'/accounts');if(accts&&accts.length){const main=accts.find(x=>x.username===a.account)||accts[0];a.cred_type=main.cred_type;}}catch(e){}
   window.__agGroups=await api('/asset-groups');
   }
   openModal(`
@@ -1118,13 +1119,16 @@ async function assetForm(id){
     ${mRow('所属节点','<select id="m-node">'+nodeOpts+'</select>')}
     ${mRow('所属分组（可多选）',`<div id="m-extra-wrap" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><div id="m-extra-chips" style="display:flex;gap:4px;flex-wrap:wrap"></div><select id="m-extra-add" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text)" onchange="addGroupSel(this)"><option value="">＋ 添加分组…</option></select></div><div class="hint">一台资产可属多个分组；授权按 分组 或 单个资产 生效</div>`)}
     ${mRow('托管账号','<div style="display:flex;gap:8px;align-items:center"><input id="m-account" value="'+esc(a.account||'root')+'" placeholder="root / administrator" style="flex:1">'+(id&&a.account?`<button class="btn btn-ghost" style="white-space:nowrap;color:#cf1322;border-color:#cf1322" onclick="unManageAccount(${id},'${esc(a.account)}')">取消托管</button>`:'')+'</div><div class="hint">'+(id?(a.account?`已托管账号：<b class="mono">${esc(a.account)}</b>（凭据加密存储，不可查看；取消托管后连接时需手动输入账密）`:'⚠ 尚未托管账号，填入账号密码后将自动创建'):'凭据由堡垒机加密托管，运维全程不可见')+'</div>')}
-    ${mRow('账号密码',`<input id="m-password" type="password" placeholder="${id?(a.account?'留空则不修改':'设置初始密码'):'初始密码'}">`)}
+    ${mRow('认证方式',`<select id="m-credtype" onchange="credTypeSwitch()"><option value="password" ${(a.cred_type||'password')!=='key'?'selected':''}>🔑 密码</option><option value="key" ${a.cred_type==='key'?'selected':''}>🗝️ SSH 私钥（证书登录）</option></select><div class="hint">虚拟机等使用密钥认证的资产请选 SSH 私钥，粘贴 PEM 私钥全文</div>`)}
+    <div id="m-pass-row">${mRow('账号密码',`<input id="m-password" type="password" placeholder="${id?(a.account?'留空则不修改':'设置初始密码'):'初始密码'}">`)}</div>
+    <div id="m-key-row" style="display:none">${mRow('SSH 私钥',`<textarea id="m-privkey" rows="6" style="width:100%;font-family:var(--mono);font-size:11px" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"></textarea><input id="m-keypass" type="password" placeholder="私钥口令（无口令留空）" style="margin-top:6px"><div class="hint">${id&&a.cred_type==='key'?'已托管私钥（加密存储不可查看）；粘贴新私钥可替换':'粘贴 PEM/OpenSSH 格式私钥全文；AES-256-GCM 加密托管'}</div>`)}</div>
   </div>
   <div class="modal-foot">
     <button class="btn btn-ghost" onclick="closeModal()">取消</button>
     <button class="btn btn-primary" onclick="saveAsset(${id||0})">${id?'保存修改':'创 建'}</button>
   </div>`);
   document.getElementById('m-node').value=a.node_id;
+  if(document.getElementById('m-credtype'))credTypeSwitch();
   window.__grpSel=new Set(a.group_ids||[]);
   renderGrpChips();
   // 系统下拉回显：已知值选中，未知值落"其他"并填入输入框
@@ -1159,6 +1163,11 @@ function addGroupSel(sel){const v=+sel.value;if(v){window.__grpSel.add(v);sel.va
 function rmGrp(gid){window.__grpSel.delete(gid);renderGrpChips()}
 
 
+function credTypeSwitch(){
+  const t=document.getElementById('m-credtype').value;
+  document.getElementById('m-pass-row').style.display=t==='password'?'':'none';
+  document.getElementById('m-key-row').style.display=t==='key'?'':'none';
+}
 function devTypeSwitch(){
   const v=document.getElementById('m-devtype').value;
   const h=document.getElementById('m-devtype-hint');
@@ -1192,7 +1201,9 @@ async function saveAsset(id){
     node_id:+document.getElementById('m-node').value,
     labels:((document.getElementById('m-labels'))||{}).value||'',
     account:document.getElementById('m-account').value.trim(),
-    password:document.getElementById('m-password').value||undefined,
+    password:document.getElementById('m-credtype').value!=='key'?(document.getElementById('m-password').value||undefined):undefined,
+    private_key:document.getElementById('m-credtype').value==='key'?(document.getElementById('m-privkey').value.trim()||undefined):undefined,
+    key_passphrase:document.getElementById('m-credtype').value==='key'?(document.getElementById('m-keypass').value||undefined):undefined,
     device_type:((document.getElementById('m-devtype'))||{}).value||'linux',
     group_ids:[...(window.__grpSel||[])],
     enable_password:((document.getElementById('m-enablepw'))||{}).value||undefined

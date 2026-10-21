@@ -759,7 +759,14 @@ async def create_asset(request: Request, p=Depends(require_role('admin'))):
         (b.get('node_id', 1), _sanitize_text(b['hostname'], 128), b['ip'], _sanitize_text(b.get('os_type', 'Linux'), 40),
          b.get('ssh_port', 22), b.get('rdp_port', 3389), b.get('protocol', 'ssh'), labels, _dt,
          _sanitize_text(b.get('initial_db'), 64) if _dt == 'mysql' else None))
-    if b.get('password'):
+    if b.get('private_key'):
+        pem = (b.get('private_key') or '').strip()
+        if b.get('key_passphrase'):
+            pem += "\n@@PASS@@" + b['key_passphrase']
+        utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted, enable_secret_enc) VALUES (%s,%s,'key',%s,%s)",
+                      (aid, b.get('account', 'root'), utils.encrypt_secret(pem),
+                       utils.encrypt_secret(b['enable_password']) if b.get('enable_password') else None))
+    elif b.get('password'):
         utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted, enable_secret_enc) VALUES (%s,%s,'password',%s,%s)",
                       (aid, b.get('account', 'root'), utils.encrypt_secret(b['password']),
                        utils.encrypt_secret(b['enable_password']) if b.get('enable_password') else None))
@@ -784,12 +791,24 @@ async def update_asset(aid: int, request: Request, p=Depends(require_role('admin
                    _sanitize_text(b.get('os_type', row['os_type']), 40),
                    b.get('protocol', row['protocol']), b.get('ssh_port', row['ssh_port']),
                    b.get('rdp_port', row['rdp_port']), b.get('status', row['status']), labels, aid))
-    # 可选：更新托管账号密码
-    if b.get('password'):
+    # 可选：更新托管账号密码 / 私钥
+    if b.get('private_key'):
+        pem = (b.get('private_key') or '').strip()
+        if b.get('key_passphrase'):
+            pem += "\n@@PASS@@" + b['key_passphrase']
         acct = b.get('account', 'root')
         exist = utils.query("SELECT id FROM asset_accounts WHERE asset_id=%s AND username=%s", (aid, acct), one=True)
         if exist:
-            utils.execute("UPDATE asset_accounts SET secret_encrypted=%s, status='active' WHERE id=%s",
+            utils.execute("UPDATE asset_accounts SET secret_encrypted=%s, cred_type='key', status='active' WHERE id=%s",
+                          (utils.encrypt_secret(pem), exist['id']))
+        else:
+            utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted) VALUES (%s,%s,'key',%s)",
+                          (aid, acct, utils.encrypt_secret(pem)))
+    elif b.get('password'):
+        acct = b.get('account', 'root')
+        exist = utils.query("SELECT id FROM asset_accounts WHERE asset_id=%s AND username=%s", (aid, acct), one=True)
+        if exist:
+            utils.execute("UPDATE asset_accounts SET secret_encrypted=%s, cred_type='password', status='active' WHERE id=%s",
                           (utils.encrypt_secret(b['password']), exist['id']))
         else:
             utils.execute("INSERT INTO asset_accounts (asset_id, username, cred_type, secret_encrypted) VALUES (%s,%s,'password',%s)",
@@ -1060,6 +1079,22 @@ def _asset_node_universe(asset: dict) -> list:
     for row in utils.query("SELECT node_id FROM asset_extra_nodes WHERE asset_id=%s", (asset['id'],)):
         ids.update(_node_ids_with_ancestors(row['node_id']))
     return list(ids)
+
+
+def ssh_auth_kwargs(acc: dict) -> dict:
+    """按凭据类型构造 asyncssh.connect 认证参数（password ∥ 私钥 key）
+    cred_type='key'：secret 为 AES 加密的 PEM 私钥全文（可选 passphrase 行内约定：私钥明文后跟 \n@@PASS@@<phrase>）"""
+    secret = utils.decrypt_secret(acc['secret_encrypted'])
+    if (acc.get('cred_type') or 'password') == 'key':
+        passphrase = None
+        if '@@PASS@@' in secret:
+            pem, passphrase = secret.split('@@PASS@@', 1)
+            pem, passphrase = pem.rstrip('\n'), passphrase.strip() or None
+        else:
+            pem = secret
+        import asyncssh
+        return {'client_keys': [asyncssh.import_private_key(pem, passphrase)]}
+    return {'password': secret}
 
 
 def check_access(user: dict, asset_id: int, account: str) -> Optional[dict]:
@@ -1577,7 +1612,7 @@ async def ws_terminal(ws: WebSocket, asset_id: int, account_id: int, token: str 
     try:
         conn = await asyncio.wait_for(
             asyncssh.connect(asset['ip'], port=asset['ssh_port'], username=acc['username'],
-                             password=secret, known_hosts=None), timeout=10)
+                             known_hosts=None, **ssh_auth_kwargs(acc)), timeout=10)
     except Exception as e:
         msg = f"\r\n\x1b[31m[NextBastion] SSH 连接失败: {type(e).__name__}: {e}\r\n\x1b[0m\r\n"
         await ws.send_text(msg)
