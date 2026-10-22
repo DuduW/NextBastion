@@ -96,6 +96,8 @@
   .switch .sl::before{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:var(--surface);top:2px;left:2px;transition:.2s}
   .switch input:checked + .sl{background:var(--green)}
   .switch input:checked + .sl::before{transform:translateX(16px)}
+  .switch .sl.on{background:var(--green)}
+  .switch .sl.on::before{transform:translateX(16px)}
   .toast{position:fixed;top:20px;right:20px;z-index:200;background:#1d1d1f;color:#fff;padding:12px 20px;border-radius:12px;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.25);display:none}
   .rec-dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--red);font-weight:600}
   .rec-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--red);animation:blink 1.2s infinite}
@@ -257,6 +259,7 @@ function logout(){TOKEN='';USER=null;sessionStorage.clear();location.reload()}
 document.querySelectorAll('.nav-item[data-page]').forEach(i=>i.onclick=()=>go(i.dataset.page));
 function go(page){
   if(!pageAllowed(page)){toast('无权访问该页面');page='myassets'}
+  try{sessionStorage.setItem('nb_page',page)}catch(e){}
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active',i.dataset.page===page));
   (PAGES[page]||PAGES.dashboard)().then(html=>{document.getElementById('main').innerHTML=html;if(page==='settings'){if(typeof ldapLoad==='function')ldapLoad();if(typeof foRefresh==='function')foRefresh();const u=document.getElementById('sysinfo-url');if(u){u.innerHTML='<span class=\'mono\'>'+esc(location.host)+'</span> · <b>'+esc(location.protocol==='https:'?'HTTPS':'HTTP')+'</b>';}}if(page==='myassets')myAssetsFilter();if(page==='assets')assetsFilter();if(page==='dashboard'&&typeof loadHighRisk==='function')loadHighRisk();if(page==='policies')paginateTable('#pol-table','pol');if(page==='users'){if(window.__roleFilter){const sel=document.getElementById('u-role-q');if(sel){sel.value=window.__roleFilter;}window.__roleUsersFilter&&window.__roleUsersFilter();window.__roleFilter=null;}paginateTable('#usr-table','usr');}});
 }
@@ -2312,7 +2315,7 @@ if(TOKEN&&USER){
   document.getElementById('login-page').style.display='none';
   document.getElementById('app').style.display='block';
   fillUserBar();
-  go('dashboard');
+  go((()=>{try{const pg=sessionStorage.getItem('nb_page');return pg&&PAGES[pg]?pg:'dashboard'}catch(e){return 'dashboard'}})());
 }
 </script>
 
