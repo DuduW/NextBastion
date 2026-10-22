@@ -1105,11 +1105,11 @@ async function assetForm(id){
   const nodeOpts=nodes.map(n=>`<option value="${n.id}">${esc(n.name)}</option>`).join('');
   let a={hostname:'',ip:'',os_type:'Linux',protocol:'ssh',ssh_port:22,rdp_port:3389,node_id:((nodes[0])||{}).id||1,account:'root',labels_arr:[]};
   let title='新建资产';
+  window.__agGroups=await api('/asset-groups');
   if(id){
     const rows=await api('/assets');a=rows.find(x=>x.id===id)||a;a.labels_arr=parseLabels(a.labels);title='编辑资产 · '+a.hostname;
     try{a.group_ids=await api('/assets/'+id+'/groups')}catch(e){a.group_ids=[]}
   try{const accts=await api('/assets/'+id+'/accounts');if(accts&&accts.length){const main=accts.find(x=>x.username===a.account)||accts[0];a.cred_type=main.cred_type;}}catch(e){}
-  window.__agGroups=await api('/asset-groups');
   }
   openModal(`
   <div class="modal-head"><b>${title}</b><button class="modal-x" onclick="closeModal()">✕</button></div>
