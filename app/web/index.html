@@ -73,6 +73,7 @@
   .modal.wide{width:960px;display:flex;flex-direction:column;max-height:calc(100vh - 80px)}
   .modal.wide .modal-head,.modal.wide .modal-foot{flex:none}
   .modal.wide .modal-body{overflow-y:auto;min-height:0;overscroll-behavior:contain}
+  .modal.wide.md{width:680px}
   .modal.wide table{width:100%}
   .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .tbl-scroll table{min-width:640px}
@@ -1761,8 +1762,8 @@ async function taskForm(){
   <div class="modal-body">
     ${mRow('任务类型','<select id="tk-type" onchange="taskTypeSwitch()"><option value="script">📜 Linux 脚本任务</option><option value="backup">🔄 交换机配置备份</option><option value="inspect">🩺 交换机定时巡检</option></select>')}
     ${mRow('任务名称 *','<input id="tk-name" placeholder="如 核心交换机每日备份">')}
-    ${mRow('目标资产（本人授权，多选）','<div class="m-check" id="tk-assets" style="max-height:130px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px">'+
-      (myAssets||[]).map(a=>`<label style="display:flex;gap:6px;align-items:center;padding:2px 0"><input type="checkbox" value="${a.id}"> ${esc(a.hostname)} <span class="hint mono">${esc(a.ip)}</span></label>`).join('')+'</div>')}
+    ${mRow('目标资产（本人授权，多选）','<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer"><input type="checkbox" id="tk-all" onchange="tkAllAssets(this)"> <span class="hint">全选</span></label><span class="hint" id="tk-count">已选 0 台</span></div><div class="m-check" id="tk-assets" style="max-height:140px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px">'+
+      (myAssets||[]).map(a=>`<label style="display:flex;gap:6px;align-items:center;padding:2px 0"><input type="checkbox" value="${a.id}" onchange="tkCountAssets()"> ${esc(a.hostname)} <span class="hint mono">${esc(a.ip)}</span></label>`).join('')+'</div>')}
     <div id="tk-script-row">${mRow('脚本内容（{{hostname}}/{{ip}} 变量）','<textarea id="tk-script" rows="5" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="df -h | tail -n +2 | awk \'$5+0>=90\'"></textarea>')}</div>
     <div id="tk-th-row" style="display:none">${mRow('巡检阈值','<div style="display:flex;gap:8px"><input id="tk-cpu" type="number" value="80" style="width:100%" placeholder="CPU%"><input id="tk-mem" type="number" value="80" style="width:100%" placeholder="内存%"><input id="tk-temp" type="number" value="40" style="width:100%" placeholder="温度°C"></div>')}</div>
     <div id="tk-ret-row" style="display:none">${mRow('备份保留策略','<div style="display:flex;gap:8px;align-items:center"><input id="tk-ret-n" type="number" value="30" style="width:90px"> <span class="hint">份/设备</span> <label style="display:flex;gap:4px;align-items:center;margin-left:8px"><input id="tk-ret-daily" type="checkbox" checked> <span class="hint">每日末份永久保留</span></label></div>')}</div>
@@ -1771,8 +1772,11 @@ async function taskForm(){
   </div>
   <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">取消</button>
     <button class="btn btn-primary" onclick="saveTask()">创 建</button>
-    <button class="btn btn-ghost" onclick="saveTask(true)">创建并立即执行</button></div>`);
+    <button class="btn btn-ghost" onclick="saveTask(true)">创建并立即执行</button></div>`,true);
+  document.getElementById('modal-box').classList.add('md');
 }
+function tkAllAssets(cb){document.querySelectorAll('#tk-assets input[type=checkbox]').forEach(c=>c.checked=cb.checked);tkCountAssets()}
+function tkCountAssets(){const n=document.querySelectorAll('#tk-assets input[type=checkbox]:checked').length;const el=document.getElementById('tk-count');if(el)el.textContent='已选 '+n+' 台'}
 function taskTypeSwitch(){
   const t=document.getElementById('tk-type').value;
   document.getElementById('tk-script-row').style.display=t==='script'?'':'none';
