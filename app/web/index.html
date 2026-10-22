@@ -1771,7 +1771,10 @@ async function taskForm(){
     ${mRow('任务名称 *','<input id="tk-name" placeholder="如 核心交换机每日备份">')}
     ${mRow('目标资产（本人授权，多选）','<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><label style="display:flex;gap:5px;align-items:center;font-size:12px;cursor:pointer"><input type="checkbox" id="tk-all" onchange="tkAllAssets(this)"> <span class="hint">全选</span></label><span class="hint" id="tk-count">已选 0 台</span></div><div id="tk-assets" style="display:flex;flex-direction:column;gap:2px;max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px">'+
       (myAssets||[]).map(a=>`<label style="display:grid;grid-template-columns:20px 160px 1fr;align-items:center;column-gap:14px;padding:3px 0;justify-items:start;text-align:left"><input type="checkbox" value="${a.id}" onchange="tkCountAssets()" style="margin:0"><span class="mono" style="justify-self:start">${esc(a.ip)}</span><span style="justify-self:start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.hostname)}</span></label>`).join('')+'</div>')}
-    <div id="tk-script-row">${mRow('脚本内容（{{hostname}}/{{ip}} 变量）','<textarea id="tk-script" rows="5" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="df -h | tail -n +2 | awk \'$5+0>=90\'"></textarea>')}</div>
+    <div id="tk-script-row">
+      ${mRow('预设脚本','<select id="tk-preset" onchange="tkPresetSwitch()">'+Object.entries(TK_PRESETS).map(([k,p])=>`<option value="${k}">${p.name}</option>`).join('')+'</select><div class="hint">选择内置巡检脚本自动填充，或选「自定义脚本」自行编写；脚本可继续编辑，支持 {{hostname}}/{{ip}} 变量</div>')}
+      ${mRow('脚本内容','<textarea id="tk-script" rows="9" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="df -h | tail -n +2 | awk \'$5+0>=90\'"></textarea>')}
+    </div>
     <div id="tk-th-row" style="display:none">${mRow('巡检阈值','<div style="display:flex;gap:8px"><input id="tk-cpu" type="number" value="80" style="width:100%" placeholder="CPU%"><input id="tk-mem" type="number" value="80" style="width:100%" placeholder="内存%"><input id="tk-temp" type="number" value="40" style="width:100%" placeholder="温度°C"></div>')}</div>
     <div id="tk-cmd-row" style="display:none">${mRow('执行命令预览',`<div style="border:1px solid var(--border);border-radius:10px;padding:8px 12px;background:var(--surface);font-family:var(--mono);font-size:11.5px;line-height:1.9" id="tk-cmds"></div><div class="hint">按目标设备的厂商类型自动选择命令（华为/H3C/Cisco 系）；命令由系统内置，无需填写</div>`)}</div>
     <div id="tk-ret-row" style="display:none">${mRow('备份保留策略','<div style="display:flex;gap:8px;align-items:center"><input id="tk-ret-n" type="number" value="30" style="width:90px"> <span class="hint">份/设备</span> <label style="display:flex;gap:4px;align-items:center;margin-left:8px"><input id="tk-ret-daily" type="checkbox" checked> <span class="hint">每日末份永久保留</span></label></div>')}</div>
@@ -1789,6 +1792,64 @@ const TK_CMDS={
   backup:{huawei:['display current-configuration'],cisco:['show running-config']},
   inspect:{huawei:['display version','display cpu-usage','display memory-usage','display environment','display interface brief','display power','display fan','display alarm active']}
 };
+// ===== Linux 预设巡检脚本库 =====
+const TK_PRESETS={
+  quick:{name:'🟢 快速巡检（负载+磁盘+内存）',def:'Linux 快速巡检',script:[
+    'echo "===== 主机概览 ====="',
+    'hostname; uname -r; uptime',
+    'echo "===== CPU 负载 TOP5 ====="',
+    "ps aux --sort=-%cpu | head -6",
+    'echo "===== 内存使用 ====="',
+    "free -h | awk 'NR<=2'",
+    'echo "===== 磁盘使用率（≥80% 标红提示）====="',
+    "df -h | tail -n +2 | awk '{u=$5+0; printf (u>=80?\"\\033[31m\":\"\\033[0m\")\"%-30s %6s %6s %6s %s\\n\",$6,$2,$3,$4,$5}'"
+  ].join('\n')},
+  disk:{name:'💾 磁盘空间巡检（inode + 大目录）',def:'Linux 磁盘空间巡检',script:[
+    'echo "===== 文件系统使用率 ====="',
+    'df -hP | tail -n +2',
+    'echo "===== inode 使用率 ====="',
+    'df -iP | tail -n +2',
+    'echo "===== 根目录一级大目录 TOP10 ====="',
+    "du -xh --max-depth=1 / 2>/dev/null | sort -rh | head -11"
+  ].join('\n')},
+  net:{name:'🌐 网络连接巡检（端口/连接数）',def:'Linux 网络连接巡检',script:[
+    'echo "===== 网卡与 IP ====="',
+    "ip -br addr 2>/dev/null || ifconfig | grep -E '^[a-z]|inet '",
+    'echo "===== 监听端口 ====="',
+    "ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null",
+    'echo "===== 连接数统计（按状态）====="',
+    "ss -ant 2>/dev/null | awk 'NR>1{c[$1]++}END{for(s in c)print s,c[s]}' | sort"
+  ].join('\n')},
+  sec:{name:'🔒 安全巡检（登录/失败/暴破）',def:'Linux 安全登录巡检',script:[
+    'echo "===== 最近登录成功 ====="',
+    "last -a -n 10 2>/dev/null | head -12",
+    'echo "===== 最近登录失败（暴破线索）====="',
+    "lastb -a -n 10 2>/dev/null | head -12 || grep -i 'failed\\|invalid' /var/log/secure 2>/dev/null | tail -10",
+    'echo "===== 当前在线用户 ====="',
+    'w',
+    'echo "===== 空口令/UID0 异常账户 ====="',
+    "awk -F: '($2==\"\" ){print \"空口令: \"$1}' /etc/shadow 2>/dev/null",
+    "awk -F: '($3==0 && $1!=\"root\"){print \"UID=0: \"$1}' /etc/passwd"
+  ].join('\n')},
+  svc:{name:'⚙️ 服务与进程守护巡检',def:'Linux 服务进程巡检',script: [
+    'echo "===== systemd 失败单元 ====="',
+    'systemctl --failed --no-legend --no-pager 2>/dev/null || echo "非 systemd 系统"',
+    'echo "===== 僵尸进程 ====="',
+    "ps aux | awk '$8~/^Z/{print $2,$11}' ; echo \"$(ps aux | awk '$8~/^Z/' | wc -l) 个僵尸进程\"",
+    'echo "===== 内存 TOP5 进程 ====="',
+    "ps aux --sort=-%mem | head -6",
+    'echo "===== 常见服务状态 ====="',
+    'for s in nginx httpd mysqld docker sshd; do systemctl is-active $s >/dev/null 2>&1 && echo "$s: running"; done'
+  ].join('\n')},
+  custom:{name:'✏️ 自定义脚本',def:'',script:''}
+};
+function tkPresetSwitch(){
+  const p=TK_PRESETS[document.getElementById('tk-preset').value];
+  if(!p)return;
+  document.getElementById('tk-script').value=p.script;
+  const nm=document.getElementById('tk-name');
+  if(nm&&!nm.value.trim()&&p.def)nm.value=p.def;
+}
 function taskTypeSwitch(){
   const t=document.getElementById('tk-type').value;
   document.getElementById('tk-script-row').style.display=t==='script'?'':'none';
