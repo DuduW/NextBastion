@@ -136,7 +136,7 @@
     <aside class="sidebar">
       <div class="brand"><div class="mark">🛡️</div><b>NextBastion</b></div>
       <div class="nav-group">总览</div>
-      <div class="nav-item active" data-page="dashboard" data-roles="admin,auditor,user"><span class="ic">📊</span>仪表盘</div>
+      <div class="nav-item active" data-page="dashboard" data-roles="admin,auditor"><span class="ic">📊</span>仪表盘</div>
       <div class="nav-group">运维接入</div>
       <div class="nav-item" data-page="myassets" data-roles="admin,auditor,user"><span class="ic">🖥️</span>我的资产</div>
       <div class="nav-item" data-page="mytasks" data-roles="admin,auditor,user"><span class="ic">📋</span>我的任务</div>
@@ -225,7 +225,7 @@ async function doLogin(){
     sessionStorage.setItem('nb_token',TOKEN);sessionStorage.setItem('nb_user',JSON.stringify(USER));
     document.getElementById('login-page').style.display='none';
     document.getElementById('app').style.display='block';
-    fillUserBar();go('dashboard');toast('欢迎 '+USER.username);
+    fillUserBar();go(defaultPage());toast('欢迎 '+USER.username);
   }catch(e){err.textContent='登录失败：'+e.message;err.style.display='block'}
 }
 function showTotpSetup(d){
@@ -251,8 +251,9 @@ function applyNavRoles(){
     i.style.display = rs.includes(USER&&USER.role)?'':'none';
   });
 }
-const PAGE_ROLES={assets:['admin'],nodes:['admin'],policies:['admin'],users:['admin'],roles:['admin'],filters:['admin'],settings:['admin'],active:['admin','auditor'],sessions:['admin','auditor'],commands:['admin','auditor']};
+const PAGE_ROLES={dashboard:['admin','auditor'],assets:['admin'],nodes:['admin'],policies:['admin'],users:['admin'],roles:['admin'],filters:['admin'],settings:['admin'],active:['admin','auditor'],sessions:['admin','auditor'],commands:['admin','auditor']};
 function pageAllowed(p){const rs=PAGE_ROLES[p];return !rs||rs.includes(USER&&USER.role)}
+function defaultPage(){return (USER&&USER.role==='user')?'myassets':'dashboard'}
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('login-page').style.display!=='none')doLogin()});
 function logout(){TOKEN='';USER=null;sessionStorage.clear();location.reload()}
 
@@ -2376,7 +2377,7 @@ if(TOKEN&&USER){
   document.getElementById('login-page').style.display='none';
   document.getElementById('app').style.display='block';
   fillUserBar();
-  go((()=>{try{const pg=sessionStorage.getItem('nb_page');return pg&&PAGES[pg]?pg:'dashboard'}catch(e){return 'dashboard'}})());
+  go((()=>{try{const pg=sessionStorage.getItem('nb_page');return pg&&PAGES[pg]&&pageAllowed(pg)?pg:defaultPage()}catch(e){return defaultPage()}})());
 }
 </script>
 
