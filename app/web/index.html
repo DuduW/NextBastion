@@ -1757,6 +1757,9 @@ async function loadAIModel(){
 // ===== V2.0 任务管理 =====
 async function taskForm(){
   const myAssets=await api('/my/assets');
+  const ipKey=ip=>(ip||'').split('.').map(x=>x.padStart(3,'0')).join('');
+  myAssets.sort((a,b)=>ipKey(a.ip).localeCompare(ipKey(b.ip)));
+  window.__tkAssets=myAssets;
   openModal(`
   <div class="modal-head"><b>新建任务</b><button class="modal-x" onclick="closeModal()">✕</button></div>
   <div class="modal-body">
@@ -1766,6 +1769,7 @@ async function taskForm(){
       (myAssets||[]).map(a=>`<label style="display:flex;gap:6px;align-items:center;padding:2px 0"><input type="checkbox" value="${a.id}" onchange="tkCountAssets()"> ${esc(a.hostname)} <span class="hint mono">${esc(a.ip)}</span></label>`).join('')+'</div>')}
     <div id="tk-script-row">${mRow('脚本内容（{{hostname}}/{{ip}} 变量）','<textarea id="tk-script" rows="5" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="df -h | tail -n +2 | awk \'$5+0>=90\'"></textarea>')}</div>
     <div id="tk-th-row" style="display:none">${mRow('巡检阈值','<div style="display:flex;gap:8px"><input id="tk-cpu" type="number" value="80" style="width:100%" placeholder="CPU%"><input id="tk-mem" type="number" value="80" style="width:100%" placeholder="内存%"><input id="tk-temp" type="number" value="40" style="width:100%" placeholder="温度°C"></div>')}</div>
+    <div id="tk-cmd-row" style="display:none">${mRow('执行命令预览',`<div style="border:1px solid var(--border);border-radius:10px;padding:8px 12px;background:var(--surface);font-family:var(--mono);font-size:11.5px;line-height:1.9" id="tk-cmds"></div><div class="hint">按目标设备的厂商类型自动选择命令（华为/H3C/Cisco 系）；命令由系统内置，无需填写</div>`)}</div>
     <div id="tk-ret-row" style="display:none">${mRow('备份保留策略','<div style="display:flex;gap:8px;align-items:center"><input id="tk-ret-n" type="number" value="30" style="width:90px"> <span class="hint">份/设备</span> <label style="display:flex;gap:4px;align-items:center;margin-left:8px"><input id="tk-ret-daily" type="checkbox" checked> <span class="hint">每日末份永久保留</span></label></div>')}</div>
     ${mRow('Cron 调度 *','<div style="display:flex;gap:8px"><select id="tk-cron-t" onchange="document.getElementById(\'tk-cron\').value=this.value"><option value="0 2 * * *">每天 02:00</option><option value="30 8 * * *">每天 08:30</option><option value="0 * * * *">每小时</option><option value="0 9 * * 1">每周一 09:00</option></select><input id="tk-cron" value="0 2 * * *" style="font-family:var(--mono)"></div>')}
     ${mRow('告警时机','<select id="tk-notify"><option value="fail">失败时</option><option value="fail,change">失败 + 配置变更</option><option value="fail,change,alarm">失败 + 变更 + 巡检异常</option></select>')}
@@ -1776,12 +1780,34 @@ async function taskForm(){
   document.getElementById('modal-box').classList.add('md');
 }
 function tkAllAssets(cb){document.querySelectorAll('#tk-assets input[type=checkbox]').forEach(c=>c.checked=cb.checked);tkCountAssets()}
-function tkCountAssets(){const n=document.querySelectorAll('#tk-assets input[type=checkbox]:checked').length;const el=document.getElementById('tk-count');if(el)el.textContent='已选 '+n+' 台'}
+function tkCountAssets(){const n=document.querySelectorAll('#tk-assets input[type=checkbox]:checked').length;const el=document.getElementById('tk-count');if(el)el.textContent='已选 '+n+' 台';renderTkCmds()}
+const TK_CMDS={
+  backup:{huawei:['display current-configuration'],cisco:['show running-config']},
+  inspect:{huawei:['display version','display cpu-usage','display memory-usage','display environment','display interface brief','display power','display fan','display alarm active']}
+};
 function taskTypeSwitch(){
   const t=document.getElementById('tk-type').value;
   document.getElementById('tk-script-row').style.display=t==='script'?'':'none';
   document.getElementById('tk-th-row').style.display=t==='inspect'?'':'none';
   document.getElementById('tk-ret-row').style.display=t==='backup'?'':'none';
+  document.getElementById('tk-cmd-row').style.display=(t==='backup'||t==='inspect')?'':'none';
+  renderTkCmds();
+}
+function renderTkCmds(){
+  const el=document.getElementById('tk-cmds');if(!el)return;
+  const t=document.getElementById('tk-type').value;
+  if(t!=='backup'&&t!=='inspect'){el.innerHTML='';return}
+  const assets=window.__tkAssets||[];
+  // 按厂商分组统计（华为系 display / 思科系 show）
+  const hw=assets.filter(a=>['huawei','h3c','ruijie','juniper'].includes(a.device_type||'linux'));
+  const cs=assets.filter(a=>a.device_type==='cisco');
+  const cmds=(TK_CMDS[t].huawei||[]).concat(TK_CMDS[t].cisco&&cs.length?TK_CMDS[t].cisco:[]);
+  let html=cmds.map(c=>`<div>${esc(c)}</div>`).join('');
+  if(t==='backup'){
+    html+=hw.length||!cs.length?'':'<div class="hint">show running-config（思科设备）</div>';
+    if(cs.length&&!hw.length)html='<div>show running-config</div>';
+  }
+  el.innerHTML=html||'<span class="hint">—</span>';
 }
 async function saveTask(runNow){
   const ids=[...document.querySelectorAll('#tk-assets input:checked')].map(x=>+x.value);
