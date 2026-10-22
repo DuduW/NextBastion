@@ -566,6 +566,7 @@ async filters(){
 async mytasks(){
   let rows=[];
   try{rows=await api('/tasks')}catch(e){}
+  window.__tkListRows=rows;
   const typeBadge=t=>t==='script'?badge('脚本','green'):t==='backup'?badge('备份','blue'):badge('巡检','orange');
   const tr=rows.map(t=>`<tr>
     <td><b>${esc(t.name)}</b></td>
@@ -577,9 +578,10 @@ async mytasks(){
     <td><span class="switch" style="cursor:pointer" onclick="toggleTask(${t.id},${t.enabled?0:1})"><span class="sl ${t.enabled?'on':''}"></span></span></td>
     <td style="white-space:nowrap">
       <button class="btn btn-sm btn-ghost" onclick="runTaskNow(${t.id},this)">▶ 执行</button>
+      <button class="btn btn-sm btn-ghost" onclick="taskRunsModal(${t.id},'${esc(t.name)}',${t.run_count||0})">📄 结果${t.run_count?`<span class="hint">(${t.run_count})</span>`:''}</button>
       <button class="btn btn-sm btn-ghost" onclick="delTask(${t.id},'${esc(t.name)}')">删除</button>
     </td></tr>`).join('');
-  return `<div class="page-head"><div><h2>我的任务</h2><div class="sub">仅本人可见 · Linux 脚本 / 交换机备份 / 巡检（数据在 我的资产 → 主机名 查看）</div></div>
+  return `<div class="page-head"><div><h2>我的任务</h2><div class="sub">仅本人可见 · Linux 脚本 / 交换机备份 / 巡检 · 点击「📄 结果」查看执行明细</div></div>
     <button class="btn btn-primary" onclick="taskForm()">＋ 新建任务</button></div>
   <div class="card">${rows.length?`<table><thead><tr><th>任务</th><th>类型</th><th>目标</th><th>Cron</th><th>策略</th><th>上次执行</th><th>启用</th><th>操作</th></tr></thead><tbody>${tr}</tbody></table>`:'<div class="empty">暂无任务 · 点击右上角新建</div>'}</div>`;
 },
@@ -1897,8 +1899,82 @@ async function saveTask(runNow){
   }catch(e){toast('创建失败：'+e.message)}
 }
 async function toggleTask(id,en){try{await api(`/tasks/${id}`,{method:'PUT',body:JSON.stringify({enabled:!!en})});toast(en?'已启用':'已停用');loadPage()}catch(e){toast(e.message)}}
-async function runTaskNow(id,btn){btn.disabled=true;btn.textContent='⏳';try{await api(`/tasks/${id}/run`,{method:'POST'});toast('已触发执行 · 稍后在 我的资产 查看结果');setTimeout(loadPage,1500)}catch(e){toast('失败：'+e.message);btn.disabled=false;btn.textContent='▶ 执行'}}
+async function runTaskNow(id,btn){btn.disabled=true;btn.textContent='⏳';try{await api(`/tasks/${id}/run`,{method:'POST'});toast('已触发执行');setTimeout(loadPage,1500);
+  // 自动打开执行结果（running 状态可见，稍后点刷新查看输出）
+  const t=(window.__tkListRows||[]).find(x=>x.id===id);
+  setTimeout(()=>taskRunsModal(id,t?t.name:'任务',(t?t.run_count:0)+1),800);
+}catch(e){toast('失败：'+e.message);btn.disabled=false;btn.textContent='▶ 执行'}}
 async function delTask(id,name){if(!confirm(`删除任务「${name}」？执行历史保留。`))return;try{await api(`/tasks/${id}`,{method:'DELETE'});toast('已删除');loadPage()}catch(e){toast(e.message)}}
+
+// ===== 任务执行结果弹窗 =====
+window.__tkRuns={tid:0,page:1,total:0};
+function _tkStBadge(s){return s==='success'?badge('成功','green'):s==='partial'?badge('部分','orange'):s==='fail'?badge('失败','red'):s==='running'?badge('执行中','blue'):s==='skip'?badge('跳过','gray'):badge(s||'-','gray')}
+function _tkDetailHtml(it){
+  // 巡检解析结果
+  let d=null;try{d=typeof it.detail==='string'?JSON.parse(it.detail):it.detail}catch(e){}
+  if(!d)return '';
+  let h='';
+  if(Array.isArray(d.items)){ // inspect
+    h+='<div style="margin-top:6px;border:1px solid var(--border);border-radius:10px;padding:6px 10px;background:var(--surface)">'+
+      d.items.map(i=>`<div style="display:flex;gap:8px;align-items:baseline;font-size:12px;padding:1.5px 0">`+
+        `${i.level==='ok'?'<span style="color:var(--green)">✓</span>':i.level==='warn'?'<span style="color:var(--orange)">⚠</span>':'<span style="color:var(--red)">✗</span>'} `+
+        `<b style="min-width:64px;display:inline-block">${esc(i.name)}</b><span class="hint">${esc(i.detail)}</span></div>`).join('')+'</div>';
+  }
+  if(d.snapshot_id){ // backup
+    h+=`<div class="hint" style="margin-top:4px">备份版本 v${d.version_no}${d.failed?' · 失败('+(esc(d.reason)||'')+')':(d.changed?` · <span style="color:var(--orange)">有变更 ${esc(d.diff||'')}</span>`:' · 无变更')}${d.size?` · ${(d.size/1024).toFixed(1)}KB`:''}${d.retention_removed?` · 保留清理 ${d.retention_removed} 版`:''}</div>`;
+  }
+  if(d.reason&&!d.items&&!d.snapshot_id){h+=`<div class="hint" style="margin-top:4px">原因：${esc(d.reason)}</div>`}
+  return h;
+}
+async function taskRunsModal(tid,name,runCount){
+  window.__tkRuns={tid,page:1,total:runCount||0};
+  openModal(`
+  <div class="modal-head"><b>📄 ${esc(name)} · 执行结果</b>
+    <button class="btn btn-sm btn-ghost" onclick="tkLoadRuns()" style="margin-right:auto">↻ 刷新</button>
+    <button class="modal-x" onclick="closeModal()">✕</button></div>
+  <div class="modal-body" id="tk-runs-body"><div class="hint">加载中…</div></div>
+  <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">关 闭</button></div>`,true);
+  tkLoadRuns();
+}
+async function tkLoadRuns(){
+  const st=window.__tkRuns;
+  const el=document.getElementById('tk-runs-body');if(!el)return;
+  el.innerHTML='<div class="hint">加载中…</div>';
+  try{
+    const d=await api(`/tasks/${st.tid}/runs?page=${st.page}`);
+    st.total=d.total;
+    const runs=d.runs||[];
+    if(!runs.length){el.innerHTML='<div class="empty">暂无执行记录 · 点击「▶ 执行」触发一次</div>';return}
+    el.innerHTML=runs.map(r=>{
+      const items=(r.items||[]).map(it=>`
+        <details style="border:1px solid var(--border);border-radius:10px;padding:6px 10px;margin-top:6px">
+          <summary style="cursor:pointer;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="mono" style="min-width:110px">${esc(it.ip||('资产#'+it.asset_id))}</span>
+            <span style="flex:1;min-width:100px">${esc(it.hostname||'（已删除）')}</span>
+            ${_tkStBadge(it.status)}${it.exit_code!=null?`<span class="hint mono">exit=${it.exit_code}</span>`:''}
+          </summary>
+          ${_tkDetailHtml(it)}
+          <pre style="font-size:11px;max-height:260px;overflow:auto;white-space:pre-wrap;background:var(--surface);border-radius:8px;padding:8px;margin-top:6px">${esc((it.output||'').slice(0,8000))||'<span class="hint">（无输出）</span>'}</pre>
+        </details>`).join('');
+      return `<div style="border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:10px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <b class="mono">#${r.id}</b>
+          ${_tkStBadge(r.status)}
+          ${r.trigger==='manual'?badge('手动','gray'):badge('定时','blue')}
+          <span class="hint mono">${esc(String(r.started_at).slice(0,19))}</span>
+          ${r.duration_s!=null?`<span class="hint">耗时 ${r.duration_s}s</span>`:''}
+          <span class="hint" style="margin-left:auto">${esc(r.summary||'')}</span>
+        </div>
+        ${items||'<div class="hint" style="margin-top:6px">（无资产明细）</div>'}
+      </div>`}).join('')+
+      `<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:4px 0">
+        <button class="btn btn-sm btn-ghost" ${st.page<=1?'disabled':''} onclick="tkRunsPage(${st.page-1})">← 上一页</button>
+        <span class="hint">第 ${st.page} / ${Math.max(1,Math.ceil(st.total/10))} 页 · 共 ${st.total} 次</span>
+        <button class="btn btn-sm btn-ghost" ${st.page>=Math.ceil(st.total/10)?'disabled':''} onclick="tkRunsPage(${st.page+1})">下一页 →</button>
+      </div>`;
+  }catch(e){el.innerHTML=`<div class="empty">加载失败：${esc(e.message)}</div>`}
+}
+function tkRunsPage(pg){window.__tkRuns.page=pg;tkLoadRuns()}
 
 // ===== 资产数据抽屉（我的资产 → 主机名） =====
 async function assetDataDrawer(aid,hostname){

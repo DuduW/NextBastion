@@ -2671,6 +2671,35 @@ async def task_run_now(tid: int, p=Depends(auth)):
     return utils.ok({"started": True})
 
 
+@app.get("/api/v1/tasks/{tid}/runs")
+async def task_run_history(tid: int, page: int = 1, p=Depends(auth)):
+    """任务执行历史 + 每次运行逐资产结果（owner 私有）"""
+    if not _task_owned(tid, p["sub"]):
+        raise HTTPException(404, "任务不存在")
+    page = max(1, page)
+    ps = 10
+    runs = utils.query(
+        "SELECT id, `trigger`, status, summary, started_at, finished_at, duration_s "
+        "FROM task_runs WHERE task_id=%s AND owner_id=%s ORDER BY id DESC LIMIT %s OFFSET %s",
+        (tid, p["sub"], ps, (page - 1) * ps))
+    total = utils.query("SELECT COUNT(*) n FROM task_runs WHERE task_id=%s AND owner_id=%s",
+                        (tid, p["sub"]), one=True)["n"]
+    if runs:
+        ids = [r["id"] for r in runs]
+        ph = ",".join(["%s"] * len(ids))
+        items = utils.query(
+            f"SELECT i.run_id, i.asset_id, a.hostname, a.ip, i.status, i.exit_code, "
+            f"LEFT(i.output, 20000) output, i.detail "
+            f"FROM task_run_items i LEFT JOIN assets a ON a.id=i.asset_id "
+            f"WHERE i.run_id IN ({ph}) ORDER BY i.id", ids)
+        by_run = {}
+        for it in items:
+            by_run.setdefault(it["run_id"], []).append(it)
+        for r in runs:
+            r["items"] = by_run.get(r["id"], [])
+    return utils.ok({"runs": runs, "total": total, "page": page, "page_size": ps})
+
+
 # ---- 资产维度数据（owner+授权双重过滤；供「我的资产」抽屉） ----
 
 def _my_asset_or_404(aid: int, p):
